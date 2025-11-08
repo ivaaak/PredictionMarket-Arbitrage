@@ -1,0 +1,141 @@
+.container {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    padding: 2rem;
+}
+
+.title {
+    margin: 0 0 1.5rem 0;
+    font-size: 1.5rem;
+    color: #2c3e50;
+}
+
+.noResults {
+    padding: 2rem;
+    text-align: center;
+    color: #7f8c8d;
+}
+
+.matchList {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.matchCard {
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.5rem;
+    transition: box-shadow 0.2s;
+}
+
+.matchCard:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.matchCard.arbitrage {
+    border-color: #f39c12;
+    background-color: #fef9e7;
+}
+
+.matchHeader {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.similarity {
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.exact {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.high {
+    background-color: #d1ecf1;
+    color: #0c5460;
+}
+
+.medium {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.low {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.confidence {
+    font-size: 0.9rem;
+    color: #7f8c8d;
+    font-weight: 500;
+}
+
+.arbitrageBadge {
+    padding: 0.25rem 0.75rem;
+    background-color: #f39c12;
+    color: white;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.markets {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.market {
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    padding: 1rem;
+}
+
+.marketHeader {
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 0.75rem;
+    font-size: 1.1rem;
+}
+
+.marketDetails {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.reasoning {
+    padding: 1rem;
+    background-color: #e8f4f8;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.priceDiff {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background-color: #f39c12;
+    color: white;
+    border-radius: 6px;
+    text-align: center;
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .markets {
+        grid-template-columns: 1fr;
+    }
+}

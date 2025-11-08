@@ -1,0 +1,122 @@
+.tableContainer {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.tableHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1.5rem;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.tableTitle {
+    margin: 0;
+    font-size: 1.5rem;
+    color: #2c3e50;
+}
+
+.refreshButton {
+    padding: 0.5rem 1rem;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+.refreshButton:hover {
+    background-color: #2980b9;
+}
+
+.tableWrapper {
+    overflow-x: auto;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table thead {
+    background-color: #f8f9fa;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.table th {
+    padding: 0.25rem;
+    text-align: left;
+    font-weight: 600;
+    color: #2c3e50;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.table tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+.marketName {
+    max-width: 400px;
+}
+
+.name {
+    font-weight: 500;
+    color: #2c3e50;
+    margin-bottom: 0.25rem;
+}
+
+.outcome,
+.subtitle {
+    font-size: 0.85rem;
+    color: #7f8c8d;
+    font-style: italic;
+}
+
+.price {
+    font-weight: 600;
+    color: #27ae60;
+    white-space: nowrap;
+}
+
+.volume {
+    color: #7f8c8d;
+    white-space: nowrap;
+}
+
+.timestamp {
+    font-size: 0.85rem;
+    color: #95a5a6;
+    white-space: nowrap;
+}
+
+.tableFooter {
+    padding: 1rem 1.5rem;
+    background-color: #f8f9fa;
+    border-top: 1px solid #e0e0e0;
+    font-size: 0.9rem;
+    color: #7f8c8d;
+}
+
+.loading,
+.error {
+    padding: 2rem;
+    text-align: center;
+}
+
+.error {
+    color: #e74c3c;
+}
