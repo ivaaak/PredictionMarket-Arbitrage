@@ -7,43 +7,59 @@ const db = new Database(DB_PATH); //, { verbose: console.log }); // DEBUG Consol
 const CREATE_POLYMARKET_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS polymarket_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker TEXT NOT NULL,
+    ticker TEXT NOT NULL UNIQUE,
     source TEXT NOT NULL,
     price REAL NOT NULL,
     volume INTEGER NOT NULL,
     timestamp INTEGER NOT NULL,
     title TEXT,
     outcome TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `;
 
 const CREATE_KALSHI_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS kalshi_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker TEXT NOT NULL,
+    ticker TEXT NOT NULL UNIQUE,
     source TEXT NOT NULL,
     price REAL NOT NULL,
     volume INTEGER NOT NULL,
     timestamp INTEGER NOT NULL,
     title TEXT,
     subtitle TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `;
 
-const INSERT_POLYMARKET_SQL = `
+const UPSERT_POLYMARKET_SQL = `
 INSERT INTO polymarket_data (ticker, source, price, volume, timestamp, title, outcome)
 VALUES (@ticker, @source, @price, @volume, @timestamp, @title, @outcome)
+ON CONFLICT(ticker) DO UPDATE SET
+    price = excluded.price,
+    volume = excluded.volume,
+    timestamp = excluded.timestamp,
+    title = COALESCE(excluded.title, polymarket_data.title),
+    outcome = COALESCE(excluded.outcome, polymarket_data.outcome),
+    updated_at = CURRENT_TIMESTAMP
 `;
 
-const INSERT_KALSHI_SQL = `
+const UPSERT_KALSHI_SQL = `
 INSERT INTO kalshi_data (ticker, source, price, volume, timestamp, title, subtitle)
 VALUES (@ticker, @source, @price, @volume, @timestamp, @title, @subtitle)
+ON CONFLICT(ticker) DO UPDATE SET
+    price = excluded.price,
+    volume = excluded.volume,
+    timestamp = excluded.timestamp,
+    title = COALESCE(excluded.title, kalshi_data.title),
+    subtitle = COALESCE(excluded.subtitle, kalshi_data.subtitle),
+    updated_at = CURRENT_TIMESTAMP
 `;
 
-let insertPolymarketStatement: Statement;
-let insertKalshiStatement: Statement;
+let upsertPolymarketStatement: Statement;
+let upsertKalshiStatement: Statement;
 
 export interface MarketData {
     ticker: string;
@@ -61,13 +77,13 @@ export const SQLiteClient = {
         console.log(`Initializing SQLite database at: ${DB_PATH}`);
         db.exec(CREATE_POLYMARKET_TABLE_SQL);
         db.exec(CREATE_KALSHI_TABLE_SQL);
-        insertPolymarketStatement = db.prepare(INSERT_POLYMARKET_SQL);
-        insertKalshiStatement = db.prepare(INSERT_KALSHI_SQL);
+        upsertPolymarketStatement = db.prepare(UPSERT_POLYMARKET_SQL);
+        upsertKalshiStatement = db.prepare(UPSERT_KALSHI_SQL);
         console.log('[SQLite] Database initialized and statements prepared.');
     },
 
     savePolymarketData(data: MarketData): number {
-        const info = insertPolymarketStatement.run({
+        const info = upsertPolymarketStatement.run({
             ticker: data.ticker,
             source: data.source,
             price: data.price,
@@ -80,7 +96,7 @@ export const SQLiteClient = {
     },
 
     saveKalshiData(data: MarketData): number {
-        const info = insertKalshiStatement.run({
+        const info = upsertKalshiStatement.run({
             ticker: data.ticker,
             source: data.source,
             price: data.price,
