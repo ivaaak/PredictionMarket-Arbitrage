@@ -47,21 +47,21 @@ export class PolymarketClient {
     constructor(callback: MarketUpdateCallback) {
         this.marketIds = new Set<string>();
         this.updateCallback = callback;
-        console.log(chalk.cyan.bold('\n[POLYMARKET] 🌙 Polymarket WebSocket Client - Initializing'));
+        console.log(chalk.blue.bold('\n[POLYMARKET] 🌙 Polymarket WebSocket Client - Initializing'));
     }
 
     public connect(): void {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            console.log(chalk.green('\n[POLYMARKET] 💚 Already connected.'));
+            console.log(chalk.blue('\n[POLYMARKET] 💚 Already connected.'));
             return;
         }
 
-        console.log(chalk.cyan(`\n[POLYMARKET] 🔌 Connecting to ${POLYMARKET_WEBSOCKET_URL}...`));
+        console.log(chalk.blue(`\n[POLYMARKET] 🔌 Connecting to ${POLYMARKET_WEBSOCKET_URL}...`));
         this.ws = new WebSocket(POLYMARKET_WEBSOCKET_URL);
 
         this.ws.on('open', () => {
             this.isConnected = true;
-            console.log(chalk.green('\n[POLYMARKET] ✅ WebSocket connected!'));
+            console.log(chalk.blue('\n[POLYMARKET] ✅ WebSocket connected!'));
             this.subscribeToMarkets();
             this.startPingPong();
         });
@@ -78,7 +78,7 @@ export class PolymarketClient {
             this.isConnected = false;
             this.stopPingPong();
             console.log(chalk.yellow(`\n[POLYMARKET] ⚠️ WebSocket connection closed: ${code} - ${reason.toString()}`));
-            console.log(chalk.cyan('\n[POLYMARKET] Reconnecting in 5 seconds...'));
+            console.log(chalk.blue('\n[POLYMARKET] Reconnecting in 5 seconds...'));
             setTimeout(() => this.connect(), 5000);
         });
     }
@@ -106,7 +106,7 @@ export class PolymarketClient {
         };
         
         this.ws?.send(JSON.stringify(subscriptionMsg));
-        console.log(chalk.green('\n[POLYMARKET] 📡 Subscribing to real-time activity feed...'));
+        console.log(chalk.blue('\n[POLYMARKET] 📡 Subscribing to real-time activity feed...'));
     }
 
     private onWsMessage(data: WebSocket.Data): void {
@@ -114,7 +114,7 @@ export class PolymarketClient {
             const message = JSON.parse(data.toString());
 
             if (message.type === 'subscribed') {
-                console.log(chalk.green('\n[POLYMARKET] ✅ WebSocket subscribed successfully!'));
+                console.log(chalk.blue('\n[POLYMARKET] ✅ WebSocket subscribed successfully!'));
                 this.isConnected = true;
                 return;
             }
@@ -146,7 +146,7 @@ export class PolymarketClient {
                     this.filteredTradesCount++;
                     
                     // Print trade information
-                    console.log(chalk.green(
+                    console.log(chalk.blue(
                         `\n[POLYMARKET] ✨ TRADE: ${usdAmount.toFixed(0)} - ${marketData.title?.substring(0, 70)}`
                     ));
 
@@ -164,7 +164,7 @@ export class PolymarketClient {
     }
 
     public startDataFeed(): void {
-        console.log(chalk.cyan('\n[POLYMARKET] 🚀 Starting Polymarket data feed for ALL markets...'));
+        console.log(chalk.blue('\n[POLYMARKET] 🚀 Starting Polymarket data feed for ALL markets...'));
         this.connect();
     }
 
@@ -183,6 +183,6 @@ export class PolymarketClient {
     public disconnect(): void {
         this.stopPingPong();
         this.ws?.close();
-        console.log(chalk.yellow('\n[POLYMARKET] 👋 WebSocket disconnected.'));
+        console.log(chalk.blue('\n[POLYMARKET] 👋 WebSocket disconnected.'));
     }
 }

@@ -22,22 +22,24 @@ function App() {
             </header> */}
 
             <main className={styles.main}>
+                <div className={styles.matchingContainer}>
+                    <MatchingPanel
+                        onMatchStart={() => setIsMatching(true)}
+                        onMatchComplete={handleMatchComplete}
+                        isMatching={isMatching}
+                    />
+
+                    {matches.length > 0 && (
+                        <MatchResults matches={matches} />
+                    )}
+                </div>
+
                 <div className={styles.tablesContainer}>
                     <PolymarketTable />
                     <KalshiTable />
                 </div>
 
-                <div className={styles.matchingContainer}>
-                    <MatchingPanel 
-                        onMatchStart={() => setIsMatching(true)}
-                        onMatchComplete={handleMatchComplete}
-                        isMatching={isMatching}
-                    />
-                    
-                    {matches.length > 0 && (
-                        <MatchResults matches={matches} />
-                    )}
-                </div>
+
             </main>
         </div>
     );

@@ -49,10 +49,10 @@ export class KalshiClient {
         this.marketTickers = new Set<string>();
         this.updateCallback = callback;
         this.authHeaders = authHeaders;
-        console.log(chalk.cyan.bold('\n[KALSHI] 🌙 Kalshi WebSocket Client - Initializing'));
+        console.log(chalk.green.bold('\n[KALSHI] 🌙 Kalshi WebSocket Client - Initializing'));
 
         if (!authHeaders) {
-            console.log(chalk.yellow('[KALSHI] ⚠️ No authentication headers provided - connection may fail'));
+            console.log(chalk.green('[KALSHI] ⚠️ No authentication headers provided - connection may fail'));
         }
     }
 
@@ -62,7 +62,7 @@ export class KalshiClient {
             return;
         }
 
-        console.log(chalk.cyan(`\n[KALSHI] 🔌 Connecting to ${KALSHI_WEBSOCKET_URL}...`));
+        console.log(chalk.green(`\n[KALSHI] 🔌 Connecting to ${KALSHI_WEBSOCKET_URL}...`));
 
         // Kalshi requires authentication headers during WebSocket connection
         this.ws = this.authHeaders
@@ -88,7 +88,7 @@ export class KalshiClient {
             this.isConnected = false;
             this.stopPingPong();
             console.log(chalk.yellow(`\n[KALSHI] ⚠️ WebSocket connection closed: ${code} - ${reason.toString()}`));
-            console.log(chalk.cyan('Reconnecting in 5 seconds...'));
+            console.log(chalk.green('Reconnecting in 5 seconds...'));
             setTimeout(() => this.connect(), 5000);
         });
     }
@@ -185,7 +185,7 @@ export class KalshiClient {
                 const ticker = message.msg.ticker;
 
                 if (ticker) {
-                    console.log(chalk.blue(`\n[KALSHI] 📊 Orderbook update for ${ticker}`));
+                    console.log(chalk.green(`\n[KALSHI] 📊 Orderbook update for ${ticker}`));
                 }
             }
         } catch (e) {
@@ -213,7 +213,7 @@ export class KalshiClient {
     }
 
     public startDataFeed(): void {
-        console.log(chalk.cyan('\n[KALSHI] 🚀 Starting Kalshi data feed for ALL markets...'));
+        console.log(chalk.green('\n[KALSHI] 🚀 Starting Kalshi data feed for ALL markets...'));
         this.connect();
     }
 
@@ -234,6 +234,6 @@ export class KalshiClient {
     public disconnect(): void {
         this.stopPingPong();
         this.ws?.close();
-        console.log(chalk.yellow('\n[KALSHI] 👋 WebSocket disconnected.'));
+        console.log(chalk.green('\n[KALSHI] 👋 WebSocket disconnected.'));
     }
 }
