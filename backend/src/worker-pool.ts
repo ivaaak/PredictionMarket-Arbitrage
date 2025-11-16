@@ -1,5 +1,6 @@
 import { Worker, WorkerOptions } from 'worker_threads';
 import os from 'os';
+import chalk from 'chalk';
 
 // Define the interface for a task/job that will be executed by the pool
 interface PoolTask {
@@ -34,7 +35,7 @@ export class WorkerPool {
         this.workerPath = workerPath;
         this.maxWorkers = maxWorkers || os.cpus().length;
         this.initializeWorkers();
-        console.log(`[PoolManager] Initialized Worker Pool with ${this.maxWorkers} workers.`);
+        console.log(chalk.magenta.bold('[PoolManager]'), chalk.green(`Initialized Worker Pool with ${this.maxWorkers} workers.`));
     }
 
     /**
@@ -69,8 +70,10 @@ export class WorkerPool {
             const task = this.taskQueue.splice(taskIndex, 1)[0];
             
             if (message.error) {
+                console.error(chalk.magenta.bold(`[PoolWorker ${worker.threadId}]`), chalk.red('Task failed:'), message.error);
                 task.reject(new Error(message.error));
             } else {
+                console.log(chalk.magenta.bold(`[PoolWorker ${worker.threadId}]`), chalk.green('Task completed successfully'));
                 task.resolve(message.result);
             }
 
@@ -80,14 +83,14 @@ export class WorkerPool {
         });
 
         worker.on('error', (err: Error) => {
-            console.error(`[PoolWorker ${worker.threadId}] Uncaught Error:`, err);
+            console.error(chalk.magenta.bold(`[PoolWorker ${worker.threadId}]`), chalk.red('Uncaught Error:'), err);
             // In a robust system, you might restart the worker here
             this.terminateWorker(poolWorker);
         });
 
         worker.on('exit', (code: number) => {
             if (code !== 0) {
-                console.error(`[PoolWorker ${worker.threadId}] Worker exited with code ${code}. Restarting...`);
+                console.error(chalk.magenta.bold(`[PoolWorker ${worker.threadId}]`), chalk.red(`Worker exited with code ${code}. Restarting...`));
                 // Simple restart logic:
                 this.terminateWorker(poolWorker); // Remove the old entry
                 this.initializeWorkers(); // Re-initialize (this is simplistic; production code needs better resilience)
@@ -119,7 +122,11 @@ export class WorkerPool {
             const task = this.taskQueue.shift()!;
             idleWorker.isBusy = true;
             
-            console.log(`[PoolManager] Dispatching Job ${task.jobId} to Worker ${idleWorker.worker.threadId}. Queue length: ${this.taskQueue.length}`);
+            console.log(
+                chalk.magenta.bold('[PoolManager]'), 
+                chalk.cyan(`Dispatching Job ${task.jobId} to Worker ${idleWorker.worker.threadId}.`),
+                chalk.gray(`Queue length: ${this.taskQueue.length}`)
+            );
             
             // Send the job data and ID to the worker
             idleWorker.worker.postMessage({ jobId: task.jobId, data: task.data });
@@ -145,10 +152,10 @@ export class WorkerPool {
      * Shuts down all workers in the pool gracefully.
      */
     public async terminate(): Promise<void> {
-        console.log('[PoolManager] Shutting down all workers...');
+        console.log(chalk.magenta.bold('[PoolManager]'), chalk.yellow('Shutting down all workers...'));
         const terminationPromises = this.workers.map(w => w.worker.terminate());
         await Promise.allSettled(terminationPromises);
         this.workers = [];
-        console.log('[PoolManager] Worker Pool successfully terminated.');
+        console.log(chalk.magenta.bold('[PoolManager]'), chalk.green('Worker Pool successfully terminated.'));
     }
 }

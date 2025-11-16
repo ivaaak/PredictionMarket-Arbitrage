@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import { PolymarketClient } from './polymarket.client';
 import { SQLiteClient, MarketData } from '../database/sqlite.client';
 
@@ -27,14 +28,22 @@ const handleMarketUpdate = (data: PolymarketUpdate) => {
         outcome: data.outcome
     };
 
-    console.log(`[INGEST-POLYMARKET] Processing trade for ${data.title || dataToSave.ticker}. Price: $${dataToSave.price.toFixed(4)}, Volume: $${dataToSave.volume.toFixed(0)}`);
+    console.log(
+        chalk.magenta.bold('[INGEST-POLYMARKET]'), 
+        chalk.cyan(`Processing trade for ${data.title || dataToSave.ticker}.`),
+        chalk.white(`Price: $${dataToSave.price.toFixed(4)}, Volume: $${dataToSave.volume.toFixed(0)}`)
+    );
     
     // 2. Use your exported client method to save the data
     try {
         const lastID = SQLiteClient.savePolymarketData(dataToSave);
-        console.log(`[DB] Successfully saved Polymarket data. Row ID: ${lastID}`);
+        console.log(chalk.magenta.bold('[INGEST-POLYMARKET]'), chalk.green(`Successfully saved. Row ID: ${lastID}`));
     } catch (e) {
-        console.error(`[DB ERROR] SQLite write failed for Polymarket market ${dataToSave.ticker}:`, e);
+        console.error(
+            chalk.magenta.bold('[INGEST-POLYMARKET]'), 
+            chalk.red(`SQLite write failed for market ${dataToSave.ticker}:`), 
+            e
+        );
     }
 };
 
@@ -53,12 +62,12 @@ export class PolymarketIngestor {
      * Starts the Polymarket WebSocket connection to track ALL markets.
      */
     public start() {
-        console.log('[INGEST-POLYMARKET] Starting Polymarket WebSocket Ingestor for ALL markets...');
+        console.log(chalk.magenta.bold('[INGEST-POLYMARKET]'), chalk.cyan('Starting Polymarket WebSocket Ingestor for ALL markets...'));
         this.client.startDataFeed();
     }
 
     public stop() {
         this.client.disconnect();
-        console.log('[INGEST-POLYMARKET] Polymarket Ingestor stopped.');
+        console.log(chalk.magenta.bold('[INGEST-POLYMARKET]'), chalk.green('Polymarket Ingestor stopped.'));
     }
 }

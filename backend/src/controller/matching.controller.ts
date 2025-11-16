@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import chalk from 'chalk';
 import { MatchingEngineService } from '../services/matching-engine.service';
 import { MatchFilters } from '../types/matchFilters';
 
@@ -8,7 +9,7 @@ const router = Router();
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
 if (!ANTHROPIC_API_KEY) {
-    console.warn('[MATCHING-ROUTES] Warning: ANTHROPIC_API_KEY not set in environment variables');
+    console.warn(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Warning: ANTHROPIC_API_KEY not set in environment variables'));
 }
 
 const matchingEngine = new MatchingEngineService(ANTHROPIC_API_KEY);
@@ -24,10 +25,21 @@ router.post('/match', async (req, res) => {
             limit: req.body.limit
         };
 
+        console.log(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.cyan('Received match request with filters:'), filters);
+
         const result = await matchingEngine.matchMarkets(filters);
-        res.json({ success: true, ...result });
+
+        res.json({
+            success: true,
+            ...result,
+            cacheHit: false // Could be enhanced to track this
+        });
     } catch (error) {
-        res.status(500).json({ success: false, error: String(error) });
+        console.error(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Error in match endpoint:'), error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        });
     }
 });
 
@@ -43,15 +55,37 @@ router.post('/arbitrage', async (req, res) => {
         };
 
         const minPriceDiff = req.body.minPriceDifference || 0.05;
+
+        console.log(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.cyan('Finding arbitrage opportunities with min price diff:'), chalk.white(minPriceDiff));
+
         const opportunities = await matchingEngine.findArbitrageOpportunities(filters, minPriceDiff);
-        
-        res.json({ 
-            success: true, 
-            opportunities,
-            count: opportunities.length 
+
+        // Calculate potential profit for each opportunity
+        const enrichedOpportunities = opportunities.map(opp => {
+            const priceDiff = Math.abs(opp.polymarketRecord.price - opp.kalshiRecord.price);
+            const avgVolume = (opp.polymarketRecord.volume + opp.kalshiRecord.volume) / 2;
+
+            return {
+                ...opp,
+                priceDifference: priceDiff,
+                potentialProfitPercentage: (priceDiff / Math.min(opp.polymarketRecord.price, opp.kalshiRecord.price)) * 100,
+                averageVolume: avgVolume,
+                liquidityScore: Math.min(opp.polymarketRecord.volume, opp.kalshiRecord.volume)
+            };
+        });
+
+        res.json({
+            success: true,
+            opportunities: enrichedOpportunities,
+            count: enrichedOpportunities.length,
+            minPriceDifference: minPriceDiff
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: String(error) });
+        console.error(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Error in arbitrage endpoint:'), error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        });
     }
 });
 
@@ -66,11 +100,45 @@ router.get('/match', async (req, res) => {
             limit: req.query.limit ? parseInt(req.query.limit as string) : undefined
         };
 
+        console.log(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.cyan('Received GET match request with filters:'), filters);
+
         const result = await matchingEngine.matchMarkets(filters);
         res.json({ success: true, ...result });
     } catch (error) {
-        res.status(500).json({ success: false, error: String(error) });
+        console.error(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Error in GET match endpoint:'), error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        });
     }
+});
+
+// Clear cache endpoint (useful for testing or forced refresh)
+router.post('/cache/clear', (req, res) => {
+    try {
+        matchingEngine.clearCache();
+        res.json({
+            success: true,
+            message: 'Cache cleared successfully'
+        });
+    } catch (error) {
+        console.error(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Error clearing cache:'), error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        });
+    }
+});
+
+// Health check endpoint
+router.get('/health', (req, res) => {
+    const health = {
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        apiKeyConfigured: !!ANTHROPIC_API_KEY
+    };
+
+    res.json(health);
 });
 
 export default router;

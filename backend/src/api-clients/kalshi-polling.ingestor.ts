@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import { KalshiPollingClient, KalshiPollingUpdate } from './kalshi.polling.client';
 import { SQLiteClient, MarketData } from '../database/sqlite.client';
 
@@ -17,13 +18,21 @@ const handleMarketUpdate = (data: KalshiPollingUpdate) => {
         subtitle: data.subtitle
     };
 
-    console.log(`[INGEST-KALSHI-POLLING] Processing update for ${dataToSave.title || dataToSave.ticker}. Price: $${dataToSave.price.toFixed(4)}`);
+    console.log(
+        chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), 
+        chalk.cyan(`Processing update for ${dataToSave.title || dataToSave.ticker}.`),
+        chalk.white(`Price: $${dataToSave.price.toFixed(4)}`)
+    );
     
     try {
         const lastID = SQLiteClient.saveKalshiData(dataToSave);
-        console.log(`[DB] Successfully saved Kalshi data. Row ID: ${lastID}`);
+        console.log(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.green(`Successfully saved. Row ID: ${lastID}`));
     } catch (e) {
-        console.error(`[DB ERROR] SQLite write failed for Kalshi market ${dataToSave.ticker}:`, e);
+        console.error(
+            chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), 
+            chalk.red(`SQLite write failed for market ${dataToSave.ticker}:`), 
+            e
+        );
     }
 };
 
@@ -42,13 +51,13 @@ export class KalshiPollingIngestor {
      * Starts polling Kalshi API for market data
      */
     public start() {
-        console.log('[INGEST-KALSHI-POLLING] Starting Kalshi Polling Ingestor...');
+        console.log(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.cyan('Starting Kalshi Polling Ingestor...'));
         this.client.startPolling();
     }
 
     public stop() {
         this.client.stopPolling();
-        console.log('[INGEST-KALSHI-POLLING] Kalshi Polling Ingestor stopped.');
+        console.log(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.green('Kalshi Polling Ingestor stopped.'));
     }
 
     public isRunning(): boolean {

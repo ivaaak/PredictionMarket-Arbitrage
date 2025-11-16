@@ -1,3 +1,5 @@
+import chalk from 'chalk';
+
 interface KalshiMarket {
     ticker: string;
     title: string;
@@ -44,14 +46,17 @@ export class KalshiPollingClient {
             const response = await fetch(`${this.baseUrl}/markets?limit=100&status=open`);
             
             if (!response.ok) {
-                console.error(`[KALSHI-POLLING] API request failed: ${response.status}`);
+                console.error(
+                    chalk.red.bold('[KALSHI-POLLING]'), 
+                    chalk.red(`API request failed: ${response.status}`)
+                );
                 return [];
             }
 
             const data: KalshiMarketsResponse = await response.json();
             return data.markets || [];
         } catch (error) {
-            console.error('[KALSHI-POLLING] Error fetching markets:', error);
+            console.error(chalk.red.bold('[KALSHI-POLLING]'), chalk.red('Error fetching markets:'), error);
             return [];
         }
     }
@@ -87,14 +92,17 @@ export class KalshiPollingClient {
      * Polling function that runs at intervals
      */
     private async poll() {
-        console.log('[KALSHI-POLLING] Fetching markets...');
+        console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.cyan('Fetching markets...'));
         const markets = await this.fetchMarkets();
         
         if (markets.length > 0) {
-            console.log(`[KALSHI-POLLING] Fetched ${markets.length} markets`);
+            console.log(
+                chalk.red.bold('[KALSHI-POLLING]'), 
+                chalk.green(`Fetched ${markets.length} markets`)
+            );
             this.processMarkets(markets);
         } else {
-            console.log('[KALSHI-POLLING] No markets fetched');
+            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.yellow('No markets fetched'));
         }
     }
 
@@ -102,7 +110,10 @@ export class KalshiPollingClient {
      * Start polling for market data
      */
     public startPolling() {
-        console.log(`[KALSHI-POLLING] Starting polling every ${this.intervalMs / 1000} seconds`);
+        console.log(
+            chalk.red.bold('[KALSHI-POLLING]'), 
+            chalk.cyan(`Starting polling every ${this.intervalMs / 1000} seconds`)
+        );
         
         // Fetch immediately on start
         this.poll();
@@ -120,7 +131,7 @@ export class KalshiPollingClient {
         if (this.pollingInterval) {
             clearInterval(this.pollingInterval);
             this.pollingInterval = null;
-            console.log('[KALSHI-POLLING] Polling stopped');
+            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.green('Polling stopped'));
         }
     }
 
