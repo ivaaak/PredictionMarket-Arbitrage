@@ -1,3 +1,4 @@
+import { parentPort, workerData } from 'worker_threads';
 import { SQLiteClient } from '../database/sqlite.client';
 import { PolymarketIngestor } from '../api-clients/polymarket.ingestor';
 import { KalshiPollingIngestor } from '../api-clients/kalshi-polling.ingestor';
@@ -6,42 +7,45 @@ let polymarketIngestor: PolymarketIngestor;
 let kalshiIngestor: KalshiPollingIngestor;
 
 /**
- * The main worker function that initializes the database and starts all
- * the dedicated WebSocket ingestor services to track ALL markets from both exchanges.
+ * The main function that initializes the database and starts all
+ * the dedicated ingestor services (runs inside the worker thread).
  */
-export async function startIngestorWorker() {
-    console.log('[WORKER] Starting Data Ingestor Worker (WebSocket Streaming - ALL MARKETS) ---');
+async function startIngestorWorker() {
+    console.log('[WORKER] Starting Data Ingestor Worker (Worker Thread) ---');
 
     try {
-        // 1. Initialize Database (ensures connection is ready)
+        // 1. Initialize Database (ensures connection is ready for the worker thread)
         await SQLiteClient.initialize();
 
         console.log('[WORKER] 📊 Starting ingestors to track ALL markets from both exchanges.');
-        
-        // 2. Start Kalshi Ingestor
-        // Option A: With authentication
-        // const kalshiIngestor = new KalshiIngestor();
-        // kalshiIngestor.start();
 
-        // Option B: Start Kalshi polling ingestor (polls every 5 seconds)
-        const kalshiIngestor = new KalshiPollingIngestor(5000);
+        // 2. Start Kalshi Polling Ingestor
+        const pollingInterval = workerData?.kalshiPollingInterval || 5000;
+        kalshiIngestor = new KalshiPollingIngestor(pollingInterval);
         kalshiIngestor.start();
-
-
-        // 3. Start Polymarket Ingestor (no specific markets - will track all)
-        const polymarketIngestor = new PolymarketIngestor();
+        
+        // 3. Start Polymarket Ingestor
+        polymarketIngestor = new PolymarketIngestor();
         polymarketIngestor.start();
 
         console.log('[WORKER] ✅ All ingestors started successfully. Streaming all market data...');
+        
+        // Notify the main thread that the worker is ready
+        parentPort?.postMessage({ status: 'ready', message: 'Ingestors started.' });
 
     } catch (error) {
         console.error('[WORKER] 🚨 Fatal Error starting Data Ingestor Worker:', error);
+        // Notify the main thread of the error and terminate the worker
+        parentPort?.postMessage({ status: 'error', message: 'Failed to start ingestors.', error: error instanceof Error ? error.message : 'Unknown error' });
         process.exit(1); 
     }
 }
 
-export function stopIngestorWorker() {
-    console.log('[WORKER] Stopping data ingestor worker...');
+/**
+ * Handles the stop signal sent from the main thread.
+ */
+function stopIngestorWorker() {
+    console.log('[WORKER] Received stop signal. Shutting down ingestors...');
     
     if (polymarketIngestor) {
         polymarketIngestor.stop();
@@ -51,5 +55,16 @@ export function stopIngestorWorker() {
         kalshiIngestor.stop();
     }
     
-    console.log('[WORKER] All ingestors stopped');
+    console.log('[WORKER] All ingestors stopped. Exiting worker thread.');
+    process.exit(0);
 }
+
+// Listen for termination signals from the main thread
+parentPort?.on('message', (message) => {
+    if (message === 'stop') {
+        stopIngestorWorker();
+    }
+});
+
+// Start the ingestion process when the worker thread initializes
+startIngestorWorker();
