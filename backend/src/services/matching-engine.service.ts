@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
 import { PolymarketService } from './polymarket.service';
 import { KalshiService } from './kalshi.service';
+import { ConsensusService } from './consensus.service';
 import { PolymarketDataRecord } from '../types/polymarketDataRecord';
 import { KalshiDataRecord } from '../types/kalshiDataRecord';
 import { MarketMatch } from '../types/marketMatch';
@@ -12,15 +13,33 @@ import { MatchCache } from '../utils/match-cache';
 
 export class MatchingEngineService {
     private anthropic: Anthropic;
+    private consensusService?: ConsensusService;
     private textProcessor: TextProcessor;
     private matchCache: MatchCache;
-    private readonly MAX_RECORDS_PER_BATCH = 50; // Prevent token overflow
-    private readonly CACHE_TTL_MS = 3600000; // 1 hour cache
+    private readonly MAX_RECORDS_PER_BATCH = 50;
+    private readonly CACHE_TTL_MS = 3600000;
+    private useConsensus: boolean;
 
-    constructor(apiKey: string) {
+    constructor(
+        anthropicKey: string,
+        geminiKey?: string,
+        openaiKey?: string,
+        useConsensus: boolean = true
+    ) {
         this.anthropic = new Anthropic({
-            apiKey: apiKey
+            apiKey: anthropicKey
         });
+        
+        // Initialize consensus service if keys are provided
+        if (geminiKey && openaiKey && useConsensus) {
+            this.consensusService = new ConsensusService(anthropicKey, geminiKey, openaiKey);
+            this.useConsensus = true;
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Consensus mode enabled with multi-agent matching'));
+        } else {
+            this.useConsensus = false;
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow('Single-agent mode (Claude only)'));
+        }
+        
         this.textProcessor = new TextProcessor();
         this.matchCache = new MatchCache(this.CACHE_TTL_MS);
     }
@@ -64,7 +83,6 @@ export class MatchingEngineService {
 
     /**
      * Pre-filter records using tokenization and similarity heuristics
-     * This reduces the number of records sent to Claude
      */
     private preFilterRecords(
         polymarketRecords: PolymarketDataRecord[],
@@ -106,7 +124,6 @@ export class MatchingEngineService {
                     kalshi.tokens
                 );
 
-                // If there's any token overlap or high similarity, consider them
                 if (similarity > 0.3) {
                     potentialMatches.push(kalshi.index);
                     relevantPolymarketIndices.add(poly.index);
@@ -140,7 +157,7 @@ export class MatchingEngineService {
     }
 
     /**
-     * Use Claude to match markets from both platforms with optimizations
+     * Use Claude or consensus to match markets
      */
     async matchMarkets(filters: MatchFilters = {}): Promise<MatchingResult> {
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.cyan('Starting market matching with filters:'), filters);
@@ -174,7 +191,6 @@ export class MatchingEngineService {
             quickMatches
         } = this.preFilterRecords(polymarketRecords, kalshiRecords);
 
-        // If pre-filtering eliminated everything, return empty
         if (filteredPoly.length === 0 || filteredKalshi.length === 0) {
             console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Pre-filtering eliminated all potential matches'));
             return {
@@ -185,7 +201,7 @@ export class MatchingEngineService {
             };
         }
 
-        // Process in batches if needed
+        // Process in batches
         const matches: MarketMatch[] = [];
         const polyBatches = this.createBatches(filteredPoly, this.MAX_RECORDS_PER_BATCH);
 
@@ -201,7 +217,7 @@ export class MatchingEngineService {
             matches.push(...batchMatches);
         }
 
-        // Remove duplicates and sort by confidence
+        // Remove duplicates and sort
         const uniqueMatches = this.deduplicateMatches(matches);
         const sortedMatches = uniqueMatches.sort((a, b) => b.confidence - a.confidence);
 
@@ -219,7 +235,7 @@ export class MatchingEngineService {
     }
 
     /**
-     * Process a batch of records through Claude
+     * Process a batch using either single agent or consensus
      */
     private async processMatchingBatch(
         polymarketBatch: PolymarketDataRecord[],
@@ -228,6 +244,68 @@ export class MatchingEngineService {
         originalPolyRecords: PolymarketDataRecord[],
         originalKalshiRecords: KalshiDataRecord[]
     ): Promise<MarketMatch[]> {
+        if (this.useConsensus) {
+            return this.processWithConsensus(polymarketBatch, kalshiRecords, quickMatches);
+        } else {
+            return this.processWithClaude(polymarketBatch, kalshiRecords, quickMatches);
+        }
+    }
+
+    /**
+     * Process with consensus service (multi-agent)
+     */
+    private async processWithConsensus(
+        polymarketBatch: PolymarketDataRecord[],
+        kalshiRecords: KalshiDataRecord[],
+        quickMatches: Map<number, number[]>
+    ): Promise<MarketMatch[]> {
+        console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.magenta('Using consensus matching...'));
+
+        if (!this.consensusService) {
+            console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Consensus service not initialized, falling back to Claude'));
+            return this.processWithClaude(polymarketBatch, kalshiRecords, quickMatches);
+        }
+
+        try {
+            const consensusMatches = await this.consensusService.getConsensusMatches(
+                polymarketBatch,
+                kalshiRecords,
+                quickMatches
+            );
+
+            // Get and log statistics
+            const stats = this.consensusService.getConsensusStatistics(consensusMatches);
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Consensus statistics:'));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Total matches: ${stats.totalMatches}`));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Unanimous (100%): ${stats.unanimousMatches}`));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Majority (60-99%): ${stats.majorityMatches}`));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Avg consensus: ${stats.averageConsensusScore}`));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Avg confidence: ${stats.averageConfidence}`));
+
+            // Convert consensus matches to MarketMatch format
+            return consensusMatches.map(cm => ({
+                polymarketRecord: polymarketBatch[cm.polymarketIndex],
+                kalshiRecord: kalshiRecords[cm.kalshiIndex],
+                similarity: cm.similarity as 'exact' | 'high' | 'medium' | 'low',
+                confidence: cm.averageConfidence,
+                reasoning: `${cm.reasoning} (Consensus: ${(cm.consensusScore * 100).toFixed(0)}% - Voted by: ${cm.agentVotes.join(', ')})`
+            }));
+        } catch (error) {
+            console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Consensus matching failed, falling back to Claude:'), error);
+            return this.processWithClaude(polymarketBatch, kalshiRecords, quickMatches);
+        }
+    }
+
+    /**
+     * Process with Claude only (single agent)
+     */
+    private async processWithClaude(
+        polymarketBatch: PolymarketDataRecord[],
+        kalshiRecords: KalshiDataRecord[],
+        quickMatches: Map<number, number[]>
+    ): Promise<MarketMatch[]> {
+        console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.blue('Using single-agent (Claude) matching...'));
+
         const prompt = this.buildOptimizedPrompt(polymarketBatch, kalshiRecords, quickMatches);
 
         try {
@@ -260,7 +338,6 @@ export class MatchingEngineService {
         kalshiRecords: KalshiDataRecord[],
         quickMatches: Map<number, number[]>
     ): string {
-        // Include tokenized versions for better matching
         const polymarketData = polymarketRecords.map((r, i) => {
             const tokens = this.textProcessor.tokenize(r.ticker);
             const normalized = this.textProcessor.normalize(r.ticker);
@@ -281,7 +358,6 @@ export class MatchingEngineService {
    Timestamp: ${r.timestamp}`;
         }).join('\n\n');
 
-        // Add hints about pre-filtered matches
         let hints = '';
         if (quickMatches.size > 0) {
             hints = '\n\nPre-filtered potential matches (high token similarity):';
@@ -338,7 +414,6 @@ Only include matches with confidence >= 0.6. Return valid JSON only, no markdown
         kalshiRecords: KalshiDataRecord[]
     ): MarketMatch[] {
         try {
-            // Remove markdown code blocks if present
             const jsonText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
             const parsed = JSON.parse(jsonText);
 
@@ -346,6 +421,8 @@ Only include matches with confidence >= 0.6. Return valid JSON only, no markdown
                 console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Invalid response format from Claude'));
                 return [];
             }
+
+            const validSimilarities = ['exact', 'high', 'medium', 'low'] as const;
 
             const matches: MarketMatch[] = parsed.matches
                 .filter((m: any) => {
@@ -359,13 +436,20 @@ Only include matches with confidence >= 0.6. Return valid JSON only, no markdown
                         m.confidence >= 0.6
                     );
                 })
-                .map((m: any) => ({
-                    polymarketRecord: polymarketRecords[m.polymarketIndex],
-                    kalshiRecord: kalshiRecords[m.kalshiIndex],
-                    similarity: m.similarity || 'low',
-                    confidence: m.confidence,
-                    reasoning: m.reasoning || 'No reasoning provided'
-                }));
+                .map((m: any) => {
+                    // Ensure similarity is a valid value
+                    const similarity = validSimilarities.includes(m.similarity) 
+                        ? m.similarity 
+                        : 'low';
+                    
+                    return {
+                        polymarketRecord: polymarketRecords[m.polymarketIndex],
+                        kalshiRecord: kalshiRecords[m.kalshiIndex],
+                        similarity: similarity as 'exact' | 'high' | 'medium' | 'low',
+                        confidence: m.confidence,
+                        reasoning: m.reasoning || 'No reasoning provided'
+                    };
+                });
 
             console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green(`Parsed ${matches.length} valid matches`));
             return matches;
@@ -388,7 +472,7 @@ Only include matches with confidence >= 0.6. Return valid JSON only, no markdown
     }
 
     /**
-     * Remove duplicate matches (same market pair matched multiple times)
+     * Remove duplicate matches
      */
     private deduplicateMatches(matches: MarketMatch[]): MarketMatch[] {
         const seen = new Set<string>();
@@ -406,7 +490,7 @@ Only include matches with confidence >= 0.6. Return valid JSON only, no markdown
     }
 
     /**
-     * Get arbitrage opportunities (markets with significant price differences)
+     * Get arbitrage opportunities
      */
     async findArbitrageOpportunities(
         filters: MatchFilters = {},
@@ -419,12 +503,23 @@ Only include matches with confidence >= 0.6. Return valid JSON only, no markdown
             return priceDiff >= minPriceDifference;
         });
 
-        // Sort by price difference (highest first)
         return arbitrageOpportunities.sort((a, b) => {
             const diffA = Math.abs(a.polymarketRecord.price - a.kalshiRecord.price);
             const diffB = Math.abs(b.polymarketRecord.price - b.kalshiRecord.price);
             return diffB - diffA;
         });
+    }
+
+    /**
+     * Toggle consensus mode
+     */
+    setConsensusMode(enabled: boolean): void {
+        if (enabled && !this.consensusService) {
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Cannot enable consensus mode: API keys not provided'));
+            return;
+        }
+        this.useConsensus = enabled;
+        console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow(`Consensus mode ${enabled ? 'enabled' : 'disabled'}`));
     }
 
     /**
