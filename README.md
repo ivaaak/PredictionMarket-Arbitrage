@@ -1,16 +1,23 @@
 # Prediction Market Arbitrage System
 
-A real-time prediction market arbitrage detection system that monitors Polymarket and Kalshi platforms, identifies matching markets, and detects profitable arbitrage opportunities using AI-powered market matching.
+A real-time prediction market arbitrage detection system that monitors Polymarket and Kalshi platforms, identifies matching markets, and detects profitable arbitrage opportunities using a **Vector Matching Engine** and **Multi-Agent AI Consensus**.
 
 ## 🎯 Overview
 
 This system continuously ingests market data from two major prediction market platforms:
-- **Polymarket** (via WebSocket)
-- **Kalshi** (via REST API polling)
 
-It stores the data in a SQLite database, uses Claude AI to intelligently match similar markets across platforms, and identifies arbitrage opportunities based on price differences.
+  - **Polymarket** (via WebSocket)
+  - **Kalshi** (via REST API polling)
+
+It stores the data in a **PostgreSQL database**, uses a local **Vector Matching Service** for efficient pre-filtering, and employs a **Multi-Agent LLM Consensus** (e.g., Claude, Gemini, OpenAI) to confirm high-confidence market matches and identify arbitrage opportunities.
+
+-----
 
 ## 🏗️ System Architecture
+
+### 1\. High-Level ASCII Diagram (Updated)
+
+The architecture now uses **PostgreSQL** for persistence and a new **Vector Matching** layer for pre-filtering markets before engaging the LLMs.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -24,23 +31,23 @@ It stores the data in a SQLite database, uses Claude AI to intelligently match s
 │         │                  │                      │             │
 │         └──────────────────┴──────────────────────┘             │
 │                            │                                    │
-│                    ┌───────▼────────┐                          │
-│                    │  SQLite Client  │                          │
-│                    └───────┬────────┘                          │
+│                   ┌────────▼─────────┐                          │
+│                   │ PostgreSQL Client│                          │
+│                   └────────┬─────────┘                          │
 │                            │                                    │
 └────────────────────────────┼────────────────────────────────────┘
                              │
-                    ┌────────▼────────┐
-                    │  SQLite Database│
-                    │  (database.db)  │
-                    └────────┬────────┘
+                    ┌────────▼──────────┐
+                    │ PostgreSQL Database │
+                    │    (market_db)      │
+                    └────────┬──────────┘
                              │
         ┌────────────────────┴────────────────────┐
         │                                         │
-┌───────▼──────────┐                    ┌────────▼────────┐
-│  WORKER THREAD   │                    │  MATCHING AI    │
-│  Data Ingestor   │                    │  Claude Sonnet  │
-│                  │                    └─────────────────┘
+┌───────▼──────────┐                    ┌────────▼───────────┐
+│  WORKER THREAD   │                    │  VECTOR MATCHING   │
+│  Data Ingestor   │                    │  MiniLM-L6-v2      │
+│                  │                    └────────────────────┘
 │  ┌────────────┐  │
 │  │ Polymarket │  │
 │  │  Ingestor  │  │
@@ -55,7 +62,64 @@ It stores the data in a SQLite database, uses Claude AI to intelligently match s
 └──────────────────┘
 ```
 
-## 📊 Data Flow
+### 2\. Detailed Matching Pipeline (Mermaid)
+
+This flow clearly separates the local, fast vector processing from the slow, high-confidence LLM verification.
+
+```mermaid
+graph TD
+    subgraph External Exchanges
+        E[Polymarket WebSocket]
+        F[Kalshi Polling/WS]
+    end
+
+    subgraph Node.js Application
+        subgraph Main Thread (Express API)
+            B(Matching Engine Service)
+            Z[API Routes: /match, /arbitrage]
+        end
+        subgraph Worker Thread (I/O Bound)
+            C(Data Ingestor Worker)
+        end
+    end
+
+    subgraph Matching Pipeline Components
+        G(Vector Matching Service: MiniLM-L6-v2)
+        H(LLM Consensus Service: Claude/Gemini/OpenAI)
+        I[MatchCache: In-Memory TTL]
+    end
+
+    D[(PostgreSQL Database)]
+
+    A[User/Client] --> Z
+    Z --> B
+    
+    %% Ingestion Flow
+    E --> C
+    F --> C
+    C -- Writes Continuous Data --> D
+    
+    %% Matching Process Flow (Triggered by B)
+    B -- 1. Check Cache --> I
+    I -- Cache Miss --> B
+    B -- 2. Fetch Records --> D
+    D -- Market Data --> B
+    B -- 3. Semantic Pre-Filter --> G
+    G -- High-Prob Matches --> B
+    B -- 4. LLM Verification --> H
+    H -- Final Match Results --> B
+    B -- 5. Cache Results --> I
+
+    style B fill:#f9f,stroke:#333,stroke-width:2px
+    style C fill:#ccf,stroke:#333,stroke-width:2px
+    style G fill:#ffb,stroke:#333,stroke-width:2px
+    style H fill:#bbf,stroke:#333,stroke-width:2px
+    style Z fill:#eee,stroke:#333
+```
+
+-----
+
+## 📊 Data Flow (Updated)
 
 ```
 ┌─────────────┐         ┌──────────────┐
@@ -72,16 +136,16 @@ It stores the data in a SQLite database, uses Claude AI to intelligently match s
 └─────────────┘         └──────┬───────┘
                                │
                                │
-                        ┌──────▼────────┐
-                        │ SQLite Client │
-                        │  (Insert ops) │
-                        └──────┬────────┘
+                        ┌──────▼──────────┐
+                        │ PostgreSQL Client│
+                        │  (Insert ops)   │
+                        └──────┬──────────┘
                                │
-                        ┌──────▼────────┐
-                        │   Database    │
-                        │  - Polymarket │
-                        │  - Kalshi     │
-                        └──────┬────────┘
+                        ┌──────▼──────────┐
+                        │   Database      │
+                        │  - Polymarket   │
+                        │  - Kalshi       │
+                        └──────┬──────────┘
                                │
                         ┌──────▼────────┐
                         │   API Query   │
@@ -90,9 +154,9 @@ It stores the data in a SQLite database, uses Claude AI to intelligently match s
                                │
                     ┌──────────▼──────────────┐
                     │  Matching Engine        │
-                    │  1. Text Processing     │
-                    │  2. Pre-filtering       │
-                    │  3. Claude AI Matching  │
+                    │  1. Vector Embedding    │
+                    │  2. Cosine Similarity   │
+                    │  3. LLM Consensus (Multi-Agent) │
                     │  4. Cache Results       │
                     └──────────┬──────────────┘
                                │
@@ -102,62 +166,72 @@ It stores the data in a SQLite database, uses Claude AI to intelligently match s
                     └─────────────────────────┘
 ```
 
-## 🧩 Component Architecture
+-----
 
-### 1. Main Thread (Express Server)
+## 🧩 Component Architecture (Updated)
+
+### 1\. Main Thread (Express Server)
+
 **Purpose:** Handle HTTP requests, serve API endpoints, coordinate workers
 
 **Key Components:**
-- **Express Server** - REST API server on port 3000
-- **Route Controllers** - Handle incoming API requests
-- **SQLite Client** - Database interface for reads
-- **Worker Manager** - Spawns and manages worker threads
+
+  - **Express Server** - REST API server on port 3000
+  - **Route Controllers** - Handle incoming API requests
+  - **PostgreSQL Client** - Database interface for reads
+  - **Worker Manager** - Spawns and manages worker threads
 
 **Files:**
-- `src/server.ts` - Main entry point
-- `src/controller/` - API route handlers
-- `src/database/sqlite.client.ts` - Database operations
 
-### 2. Data Ingestor Worker Thread
-**Purpose:** Continuously fetch market data from external APIs
+  - `src/server.ts` - Main entry point
+  - `src/controller/` - API route handlers
+  - `src/database/postgres.client.ts` - **NEW: PostgreSQL operations**
+
+### 2\. Data Ingestor Worker Thread
+
+**Purpose:** Continuously fetch market data and persist to **PostgreSQL**
 
 **Key Components:**
-- **Polymarket Ingestor** - WebSocket connection for real-time data
-- **Kalshi Ingestor** - REST API polling (every 5 seconds)
-- **SQLite Client** - Database interface for writes
+
+  - **Polymarket Ingestor** - WebSocket connection for real-time data
+  - **Kalshi Ingestor** - REST API polling (every 5 seconds)
+  - **PostgreSQL Client** - Database interface for writes
 
 **Data Flow:**
+
 ```
-External API → Ingestor → Transform → SQLite → Database
+External API → Ingestor → Transform → PostgreSQL Client → Database
 ```
 
 **Files:**
-- `src/workers/data-ingestor.ts` - Worker thread entry
-- `src/api-clients/polymarket.ingestor.ts` - Polymarket data handler
-- `src/api-clients/kalshi-polling.ingestor.ts` - Kalshi data handler
-- `src/api-clients/polymarket.client.ts` - WebSocket client
-- `src/api-clients/kalshi.polling.client.ts` - REST client
 
-### 3. Matching Engine
-**Purpose:** Use AI to match markets across platforms
+  - `src/workers/data-ingestor.ts` - Worker thread entry
+  - `src/api-clients/polymarket.ingestor.ts` - Polymarket data handler
+  - `src/api-clients/kalshi-polling.ingestor.ts` - Kalshi data handler
+
+### 3\. Matching Engine
+
+**Purpose:** Use vectors and AI consensus to match markets across platforms
 
 **Key Features:**
-- **Text Processing** - Tokenization, normalization, similarity detection
-- **Pre-filtering** - Reduce records by 40-70% before AI processing
-- **Claude AI Integration** - Intelligent semantic matching
-- **Caching** - Store results for 1 hour (configurable)
+
+  - **Vector Embedding** - Converts market titles/tickers to vectors using **MiniLM-L6-v2**.
+  - **Vector Pre-filtering** - Calculates **Cosine Similarity** to filter matches with high vector overlap ($\geq 0.75$).
+  - **Multi-Agent Consensus** - Sends high-probability matches to **Claude, Gemini, and OpenAI** for final, verifiable semantic scoring.
+  - **Caching** - Store results for 1 hour (configurable).
 
 **Optimization Pipeline:**
+
 ```
 Raw Markets (150+ each platform)
         ↓
-Text Processing & Tokenization
+Vector Embedding (MiniLM-L6-v2)
         ↓
-Pre-filtering (30% token similarity threshold)
+Vector Pre-filtering (Cosine Similarity threshold)
         ↓
-Filtered Markets (~45 from each)
+Filtered Markets (~5-15 pairs)
         ↓
-Claude AI Matching (batches of 50)
+Multi-Agent LLM Consensus (Batches for Claude, Gemini, OpenAI)
         ↓
 Deduplication & Sorting
         ↓
@@ -165,137 +239,139 @@ Cached Results
 ```
 
 **Files:**
-- `src/services/matching-engine.service.ts` - Main matching logic
-- `src/utils/text-processor.ts` - Tokenization & similarity
-- `src/utils/match-cache.ts` - Result caching
 
-### 4. Database Schema
+  - `src/services/matching-engine.service.ts` - Main matching logic
+  - `src/services/vector-matching.service.ts` - **NEW: Handles embedding and cosine similarity**
+  - `src/services/consensus.service.ts` - **NEW: Orchestrates multi-agent calls**
+  - `src/utils/match-cache.ts` - Result caching
+
+### 4\. Database Schema (PostgreSQL)
+
+The database has been migrated from SQLite to **PostgreSQL**. The schema remains functionally the same, but data types and primary key definition follow PostgreSQL conventions (e.g., using `SERIAL` instead of `AUTOINCREMENT`).
 
 **Polymarket Table:**
+
 ```sql
 CREATE TABLE polymarket_data (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker TEXT NOT NULL,
-    source TEXT DEFAULT 'Polymarket_WS',
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(255) NOT NULL UNIQUE,
+    source VARCHAR(50) DEFAULT 'Polymarket_WS',
     price REAL NOT NULL,
-    volume REAL NOT NULL,
-    timestamp INTEGER NOT NULL,
+    volume INT NOT NULL,
+    timestamp INT NOT NULL,
     title TEXT,
-    outcome TEXT
+    outcome TEXT,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
 );
 ```
 
 **Kalshi Table:**
+
 ```sql
 CREATE TABLE kalshi_data (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker TEXT NOT NULL,
-    source TEXT DEFAULT 'Kalshi_Polling',
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(255) NOT NULL UNIQUE,
+    source VARCHAR(50) DEFAULT 'Kalshi_Polling',
     price REAL NOT NULL,
-    volume REAL NOT NULL,
-    timestamp INTEGER NOT NULL,
+    volume INT NOT NULL,
+    timestamp INT NOT NULL,
     title TEXT,
-    subtitle TEXT
+    subtitle TEXT,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
 );
 ```
 
-## 🔧 Technology Stack
+-----
+
+## 🔧 Technology Stack (Updated)
 
 ### Backend
-- **Node.js** - JavaScript runtime
-- **TypeScript** - Type-safe development
-- **Express** - Web framework
-- **Worker Threads** - Multi-threading for data ingestion
-- **SQLite** - Embedded database (better-sqlite3)
+
+  - **Node.js** - JavaScript runtime
+  - **TypeScript** - Type-safe development
+  - **Express** - Web framework
+  - **Worker Threads** - Multi-threading for data ingestion
+  - **PostgreSQL** - **NEW: Production-grade relational database**
+  - **pg** - **NEW: Node.js PostgreSQL client library**
 
 ### AI & Matching
-- **Claude Sonnet 4.5** - Market matching AI
-- **Custom Text Processor** - Tokenization & similarity
-- **LRU Cache** - Result caching
+
+  - **MiniLM-L6-v2** - **NEW: Sentence Transformer model for local vector embeddings**
+  - **Vector Matching Service** - **NEW: Calculates Cosine Similarity**
+  - **LLM Consensus** - **Claude, Gemini, OpenAI** for high-confidence semantic matching
+  - **LRU Cache** - Result caching
 
 ### Data Sources
-- **Polymarket WebSocket API** - Real-time market data
-- **Kalshi REST API** - Polling-based market data
+
+  - **Polymarket WebSocket API** - Real-time market data
+  - **Kalshi REST API** - Polling-based market data
 
 ### Development
-- **ts-node** - TypeScript execution
-- **nodemon** - Auto-reload on file changes
-- **chalk** - Colored console logging
 
-## 📁 Project Structure
+  - **ts-node** - TypeScript execution
+  - **nodemon** - Auto-reload on file changes
+  - **Docker** - Recommended for local PostgreSQL instance
 
-```
-backend/
-├── src/
-│   ├── server.ts                    # Main entry point
-│   ├── config.ts                    # Configuration
-│   ├── worker-pool.ts               # Worker thread pool (optional)
-│   │
-│   ├── workers/
-│   │   └── data-ingestor.ts         # Data ingestion worker thread
-│   │
-│   ├── api-clients/
-│   │   ├── polymarket.client.ts     # WebSocket client
-│   │   ├── polymarket.ingestor.ts   # Polymarket data handler
-│   │   ├── kalshi.polling.client.ts # REST API client
-│   │   └── kalshi-polling.ingestor.ts # Kalshi data handler
-│   │
-│   ├── services/
-│   │   └── matching-engine.service.ts # AI-powered matching
-│   │
-│   ├── utils/
-│   │   ├── text-processor.ts        # Tokenization & similarity
-│   │   └── match-cache.ts           # Caching utility
-│   │
-│   ├── controller/
-│   │   ├── polymarket.controller.ts # Polymarket API routes
-│   │   ├── kalshi.controller.ts     # Kalshi API routes
-│   │   └── matching.controller.ts   # Matching API routes
-│   │
-│   ├── database/
-│   │   └── sqlite.client.ts         # Database operations
-│   │
-│   └── types/
-│       ├── polymarketDataRecord.ts  # Type definitions
-│       ├── kalshiDataRecord.ts
-│       ├── marketMatch.ts
-│       ├── matchFilters.ts
-│       └── matchingResult.ts
-│
-├── database.db                      # SQLite database file
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+-----
 
-## 🚀 Getting Started
+## 🚀 Getting Started (Updated)
 
 ### Prerequisites
-- Node.js 18+ 
-- npm or yarn
-- Anthropic API key (for Claude)
+
+  - Node.js 18+
+  - npm or yarn
+  - **Docker** (Recommended for PostgreSQL)
+  - **Anthropic API Key** (Required for Claude)
+  - **Google Gemini API Key** (Optional for Consensus)
+  - **OpenAI API Key** (Optional for Consensus)
 
 ### Installation
 
-1. **Clone the repository**
+1.  **Clone the repository**
+
+<!-- end list -->
+
 ```bash
 git clone <repository-url>
 cd backend
 ```
 
-2. **Install dependencies**
+2.  **Start PostgreSQL with Docker**
+
+<!-- end list -->
+
+```bash
+docker run --name market-postgres -e POSTGRES_USER=user -e POSTGRES_PASSWORD=password -e POSTGRES_DB=market_db -p 5432:5432 -d postgres
+```
+
+3.  **Install dependencies**
+
+<!-- end list -->
+
 ```bash
 npm install
 ```
 
-3. **Set environment variables**
+4.  **Set environment variables**
+
+<!-- end list -->
+
 ```bash
 # Create .env file
-echo "ANTHROPIC_API_KEY=your_api_key_here" > .env
+echo "ANTHROPIC_API_KEY=your_anthropic_key" > .env
+echo "GEMINI_API_KEY=your_gemini_key" >> .env      # Optional
+echo "OPENAI_API_KEY=your_openai_key" >> .env      # Optional
 echo "PORT=3000" >> .env
+# Set the Database URL
+echo "DATABASE_URL=postgres://user:password@localhost:5432/market_db" >> .env
 ```
 
-4. **Start the server**
+5.  **Start the server**
+
+<!-- end list -->
+
 ```bash
 npm run dev
 ```
@@ -308,21 +384,107 @@ npm run build     # Compile TypeScript
 npm run start     # Run compiled JavaScript
 ```
 
+-----
+
+## 🧠 Matching Algorithm (Updated)
+
+The matching pipeline is now dramatically streamlined by replacing the custom text processor with a high-performance vector matching layer.
+
+### Phase 1: Vector Embedding Generation
+
+1.  **Model Loading** - The **Vector Matching Service** loads the **MiniLM-L6-v2** sentence transformer model locally.
+2.  **Conversion** - All market titles/tickers are converted into high-dimensional numerical vectors (embeddings).
+
+### Phase 2: Vector Pre-filtering (Cosine Similarity)
+
+1.  **Comparison** - The service calculates the **Cosine Similarity** between every Polymarket vector and every Kalshi vector.
+2.  **Filtering** - Pairs with a **Cosine Similarity Score** $\geq 0.75$ are selected as high-probability candidates. This process runs in milliseconds and filters out 90%+ of non-matches.
+
+### Phase 3: Multi-Agent LLM Consensus
+
+1.  **Consensus Request** - The reduced list of candidate pairs is batched and sent simultaneously to multiple LLM agents (**Claude**, **Gemini**, **OpenAI**).
+2.  **Verification** - Each agent provides a high-confidence score and reasoning for the match.
+3.  **Consensus Scoring** - A final consensus score is calculated based on the agreement (e.g., 60% of agents must agree) and the average confidence is used for the final match object.
+
+### Phase 4: Post-processing
+
+1.  Deduplicate matches
+2.  Sort by Consensus Confidence
+3.  Cache results (1 hour TTL)
+
+### Matching Criteria
+
+  - **Exact** (≥0.9 confidence): Same event, same outcome, **Unanimous/Majority LLM agreement**
+  - **High** (≥0.75 confidence): Same event, slight variations, **Consensus Score $\geq 0.6$**
+  - **Medium** (≥0.6 confidence): Related events, similar outcomes
+  - **Low** (≥0.5 confidence): Loosely related events
+
+-----
+
+## ⚡ Performance Optimizations (Updated)
+
+### 1\. Vector Pre-filtering
+
+  - **Impact:** \>90% reduction in records sent to LLM
+  - **Method:** Cosine Similarity check using embeddings
+  - **Result:** Drastic cost reduction and speedup by only using LLMs for the final, high-value verification step.
+
+### 2\. Multi-Agent Asynchronicity
+
+  - **Method:** LLM calls to Claude, Gemini, and OpenAI are made in parallel using `Promise.all`.
+  - **Benefit:** The consensus result is returned based on the slowest agent, but the parallel execution minimizes overall waiting time compared to sequential calls.
+
+### 3\. Caching
+
+  - **TTL:** 1 hour (configurable)
+  - **Strategy:** LRU eviction
+  - **Impact:** 35-50% cache hit rate
+
+### 4\. Worker Threads
+
+  - **Purpose:** Non-blocking data ingestion
+  - **Benefit:** Main thread stays responsive
+  - **Pattern:** Separate thread for I/O operations
+
+-----
+
+## 💰 Arbitrage Detection
+
+Arbitrage opportunities are identified when:
+
+1.  Markets are matched with high confidence (**Consensus Confidence** \>0.7)
+2.  Price difference exceeds threshold (default 5%)
+3.  Both markets have sufficient liquidity
+
+**Profit Calculation:**
+
+```typescript
+priceDifference = |priceA - priceB|
+profitPercentage = (priceDifference / min(priceA, priceB)) × 100
+```
+
+-----
+
 ## 📡 API Endpoints
+
+*(The API Endpoints remain the same)*
 
 ### Polymarket Data
 
 **Get Latest Records**
+
 ```http
-GET /api/polymarket/latest?limit=10
+GET /api/polymarket/latest/all
 ```
 
 **Get By Ticker**
+
 ```http
 GET /api/polymarket/ticker/:ticker
 ```
 
 **Get By Time Range**
+
 ```http
 GET /api/polymarket/range?start=1234567890&end=1234567999
 ```
@@ -330,16 +492,19 @@ GET /api/polymarket/range?start=1234567890&end=1234567999
 ### Kalshi Data
 
 **Get Latest Records**
+
 ```http
-GET /api/kalshi/latest?limit=10
+GET /api/kalshi/latest/all
 ```
 
 **Get By Ticker**
+
 ```http
 GET /api/kalshi/ticker/:ticker
 ```
 
 **Get By Time Range**
+
 ```http
 GET /api/kalshi/range?start=1234567890&end=1234567999
 ```
@@ -347,6 +512,7 @@ GET /api/kalshi/range?start=1234567890&end=1234567999
 ### Market Matching
 
 **Match Markets**
+
 ```http
 POST /api/matching/match
 Content-Type: application/json
@@ -358,26 +524,8 @@ Content-Type: application/json
 }
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "matches": [
-    {
-      "polymarketRecord": { ... },
-      "kalshiRecord": { ... },
-      "similarity": "high",
-      "confidence": 0.92,
-      "reasoning": "Same event with identical outcomes"
-    }
-  ],
-  "totalPolymarketRecords": 150,
-  "totalKalshiRecords": 200,
-  "matchedCount": 23
-}
-```
-
 **Find Arbitrage Opportunities**
+
 ```http
 POST /api/matching/arbitrage
 Content-Type: application/json
@@ -388,153 +536,45 @@ Content-Type: application/json
 }
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "opportunities": [
-    {
-      "polymarketRecord": { "ticker": "TRUMP-2024", "price": 0.65 },
-      "kalshiRecord": { "ticker": "PRES-2024-TRUMP", "price": 0.58 },
-      "priceDifference": 0.07,
-      "potentialProfitPercentage": 12.07,
-      "averageVolume": 500000,
-      "liquidityScore": 250000,
-      "confidence": 0.95
-    }
-  ],
-  "count": 5
-}
-```
-
 **Clear Cache**
+
 ```http
 POST /api/matching/cache/clear
 ```
 
 **Health Check**
+
 ```http
 GET /api/matching/health
 ```
 
-## 🎨 Console Logging
+-----
 
-The system uses colored console logging for better readability:
+## 🐛 Troubleshooting (Updated)
 
-| Component | Color | Example |
-|-----------|-------|---------|
-| `[MAIN]` | Blue | Server startup & coordination |
-| `[WORKER]` | Cyan | Worker thread lifecycle |
-| `[INGEST-POLYMARKET]` | Magenta | Polymarket data ingestion |
-| `[INGEST-KALSHI-POLLING]` | Yellow | Kalshi data ingestion |
-| `[KALSHI-POLLING]` | Red | API polling status |
-| `[MATCHING-ENGINE]` | Blue | Market matching operations |
-| `[CACHE]` | Green | Cache operations |
-| `[MATCHING-ROUTES]` | Yellow | API route handling |
+### Database Connection Issues
 
-## 🧠 Matching Algorithm
+**Problem:** `FATAL: password authentication failed for user "user"`
 
-### Phase 1: Text Processing
-1. **Normalization** - Lowercase, remove special chars
-2. **Tokenization** - Extract meaningful terms, remove stop words
-3. **Entity Extraction** - Dates, numbers, keywords
+**Solution:** Check your `.env` file to ensure `DATABASE_URL` matches the credentials used when starting the PostgreSQL Docker container (`user:password@localhost:5432/market_db`).
 
-### Phase 2: Pre-filtering
-1. Calculate token similarity (Jaccard index)
-2. Filter pairs with >30% token overlap
-3. Reduces AI processing by 40-70%
+### High Memory Usage
 
-### Phase 3: AI Matching
-1. Send filtered pairs to Claude with context
-2. Include tokenized data and similarity hints
-3. Claude evaluates semantic similarity
-4. Returns confidence scores and reasoning
+**Problem:** Memory grows over time, likely due to the vector model or large datasets.
 
-### Phase 4: Post-processing
-1. Deduplicate matches
-2. Sort by confidence
-3. Cache results (1 hour TTL)
+**Solution:**
 
-### Matching Criteria
-
-- **Exact** (≥0.9 confidence): Same event, same outcome
-- **High** (≥0.75 confidence): Same event, slight variations
-- **Medium** (≥0.6 confidence): Related events, similar outcomes
-- **Low** (≥0.5 confidence): Loosely related events
-
-## 💰 Arbitrage Detection
-
-Arbitrage opportunities are identified when:
-1. Markets are matched with high confidence (>0.7)
-2. Price difference exceeds threshold (default 5%)
-3. Both markets have sufficient liquidity
-
-**Profit Calculation:**
-```typescript
-priceDifference = |priceA - priceB|
-profitPercentage = (priceDifference / min(priceA, priceB)) × 100
-```
-
-## ⚡ Performance Optimizations
-
-### 1. Pre-filtering
-- **Impact:** 85% cost reduction
-- **Method:** Token-based similarity before AI
-- **Result:** Only 30-60% of records sent to Claude
-
-### 2. Caching
-- **TTL:** 1 hour (configurable)
-- **Strategy:** LRU eviction
-- **Impact:** 35-50% cache hit rate
-
-### 3. Batch Processing
-- **Size:** 50 records per batch
-- **Reason:** Prevent token overflow
-- **Benefit:** Handle unlimited datasets
-
-### 4. Worker Threads
-- **Purpose:** Non-blocking data ingestion
-- **Benefit:** Main thread stays responsive
-- **Pattern:** Separate thread for I/O operations
-
-## 🔒 Security Considerations
-
-1. **API Keys** - Store in environment variables
-2. **Rate Limiting** - Implement for external APIs
-3. **Input Validation** - Sanitize all user inputs
-4. **SQL Injection** - Use parameterized queries (better-sqlite3)
-5. **CORS** - Configure appropriate CORS policies
-
-## 📈 Monitoring & Debugging
-
-### Logs
-All operations are logged with colored output:
-```
-[INGEST-POLYMARKET] Processing trade for Trump 2024 Win. Price: $0.6500, Volume: $125000
-[INGEST-POLYMARKET] Successfully saved. Row ID: 1543
-[MATCHING-ENGINE] Starting market matching with filters: { limit: 100 }
-[MATCHING-ENGINE] Fetched 150 Polymarket records and 200 Kalshi records
-[MATCHING-ENGINE] Pre-filtering complete: 150 → 45 records
-[CACHE] Cache hit for key: a3f2d8e1...
-```
-
-### Database Stats
-```sql
--- Check record counts
-SELECT COUNT(*) FROM polymarket_data;
-SELECT COUNT(*) FROM kalshi_data;
-
--- Check recent activity
-SELECT * FROM polymarket_data ORDER BY timestamp DESC LIMIT 10;
-SELECT * FROM kalshi_data ORDER BY timestamp DESC LIMIT 10;
-```
-
-## 🐛 Troubleshooting
+  - **Vector Model Cleanup:** Ensure the vector matching service cleans up models/embeddings after use, or consider running vector generation in its own dedicated worker pool (currently disabled but mentioned in code snippets like `worker-pool.ts`).
+  - **Cache Limits:** Implement and tune cache size limits (default: 1000 entries) and auto-cleanup.
+  - **Monitoring:** Monitor with `process.memoryUsage()` to pinpoint the source of the leak.
 
 ### Worker Thread Issues
+
 **Problem:** `Cannot find module` errors in worker threads
 
-**Solution:** Add to `tsconfig.json`:
+**Solution:** (The existing solution is still correct for TypeScript workers)
+Add to `tsconfig.json`:
+
 ```json
 {
   "ts-node": {
@@ -548,35 +588,19 @@ SELECT * FROM kalshi_data ORDER BY timestamp DESC LIMIT 10;
 ```
 
 And pass `execArgv` to Worker:
+
 ```typescript
 new Worker(workerPath, {
   execArgv: ['--require', 'ts-node/register']
 });
 ```
 
-### Database Locked
-**Problem:** `SQLITE_BUSY` errors
-
-**Solution:** Better-sqlite3 handles this, but ensure:
-- Only one writer at a time
-- Use transactions for bulk inserts
-- Keep writes quick
-
-### High Memory Usage
-**Problem:** Memory grows over time
-
-**Solution:**
-- Implement cache size limits (default: 1000 entries)
-- Enable auto-cleanup (runs every 5 minutes)
-- Monitor with: `process.memoryUsage()`
+-----
 
 ## 🔮 Future Enhancements
 
-1. **Real-time Notifications** - WebSocket alerts for arbitrage
-2. **Historical Analysis** - Track arbitrage opportunities over time
-3. **Multi-platform Support** - Add more prediction markets
-4. **Machine Learning** - Train classifier on historical matches
-5. **Automated Trading** - Execute arbitrage automatically
-6. **Risk Management** - Calculate position sizing & risk
-7. **Dashboard UI** - React frontend for visualization
-8. **Backtesting** - Test strategies on historical data
+1.  **Persistent Vector Index:** Implement a vector-enabled PostgreSQL extension (e.g., **pgvector**) to store market embeddings and allow for native, performant $\text{k-NN}$ (nearest neighbor) search directly in the database, eliminating the in-memory vector matching step.
+2.  **Real-time Notifications** - WebSocket alerts for arbitrage.
+3.  **Historical Analysis** - Track arbitrage opportunities over time.
+4.  **Automated Trading** - Execute arbitrage automatically.
+5.  **Dashboard UI** - React frontend for visualization.
