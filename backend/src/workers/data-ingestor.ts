@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { SQLiteClient } from '../database/sqlite.client';
 import { PolymarketIngestor } from '../api-clients/polymarket.ingestor';
 import { KalshiPollingIngestor } from '../api-clients/kalshi-polling.ingestor';
+import { PostgresClient } from '../database/postgres.client';
 
 let polymarketIngestor: PolymarketIngestor;
 let kalshiIngestor: KalshiPollingIngestor;
@@ -16,7 +17,8 @@ async function startIngestorWorker() {
 
     try {
         // 1. Initialize Database (ensures connection is ready for the worker thread)
-        await SQLiteClient.initialize();
+        // await SQLiteClient.initialize();
+        await PostgresClient.initialize();
 
         console.log(chalk.cyan.bold('[WORKER]'), chalk.yellow('📊 Starting ingestors to track ALL markets from both exchanges.'));
 
