@@ -3,7 +3,6 @@ import chalk from 'chalk';
 import { PolymarketService } from './polymarket.service';
 import { KalshiService } from './kalshi.service';
 import { ConsensusService } from './consensus.service';
-import { VectorMatchingService } from './vector-matching.service'; // New Service
 import { PolymarketDataRecord } from '../types/polymarketDataRecord';
 import { KalshiDataRecord } from '../types/kalshiDataRecord';
 import { MarketMatch } from '../types/marketMatch';
@@ -17,8 +16,6 @@ export class MatchingEngineService {
     private consensusService?: ConsensusService;
     private textProcessor: TextProcessor;
     private matchCache: MatchCache;
-    private vectorService: VectorMatchingService | null = null;
-    
     private readonly MAX_RECORDS_PER_BATCH = 50;
     private readonly CACHE_TTL_MS = 3600000;
     private useConsensus: boolean;
@@ -45,14 +42,6 @@ export class MatchingEngineService {
         
         this.textProcessor = new TextProcessor();
         this.matchCache = new MatchCache(this.CACHE_TTL_MS);
-
-        // Initialize Vector Service Asynchronously
-        VectorMatchingService.getInstance().then(service => {
-            this.vectorService = service;
-            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Vector Matching Service linked.'));
-        }).catch(err => {
-            console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Failed to link Vector Service:'), err);
-        });
     }
 
     /**
@@ -83,7 +72,7 @@ export class MatchingEngineService {
             kalshiRecords = KalshiService.getLatestByTicker();
         }
 
-        // Apply limit if specified
+        // Apply limit if specified and not already applied
         if (filters.limit) {
             polymarketRecords = polymarketRecords.slice(0, filters.limit);
             kalshiRecords = kalshiRecords.slice(0, filters.limit);
@@ -93,55 +82,59 @@ export class MatchingEngineService {
     }
 
     /**
-     * Pre-filter records using Semantic Vector Embeddings
-     * This replaces the old token-overlap method for higher accuracy.
+     * Pre-filter records using tokenization and similarity heuristics
      */
-    private async preFilterRecords(
+    private preFilterRecords(
         polymarketRecords: PolymarketDataRecord[],
         kalshiRecords: KalshiDataRecord[]
-    ): Promise<{
+    ): {
         polymarketRecords: PolymarketDataRecord[];
         kalshiRecords: KalshiDataRecord[];
         quickMatches: Map<number, number[]>;
-    }> {
-        // Ensure Vector Service is ready
-        if (!this.vectorService) {
-            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow('Vector service initializing on-demand...'));
-            this.vectorService = await VectorMatchingService.getInstance();
-        }
-
-        console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.cyan('Starting semantic pre-filtering...'));
+    } {
+        console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.cyan('Starting pre-filtering with tokenization...'));
 
         const quickMatches = new Map<number, number[]>();
+
+        // Process and tokenize all records
+        const processedPolymarket = polymarketRecords.map((record, index) => ({
+            index,
+            record,
+            tokens: this.textProcessor.tokenize(record.ticker),
+            normalized: this.textProcessor.normalize(record.ticker)
+        }));
+
+        const processedKalshi = kalshiRecords.map((record, index) => ({
+            index,
+            record,
+            tokens: this.textProcessor.tokenize(record.ticker),
+            normalized: this.textProcessor.normalize(record.ticker)
+        }));
+
+        // Find potential matches using token overlap
         const relevantPolymarketIndices = new Set<number>();
         const relevantKalshiIndices = new Set<number>();
 
-        // Map Kalshi records to the format expected by VectorService
-        // We use Title if available, otherwise Ticker, to get the best semantic meaning
-        const kalshiItems = kalshiRecords.map((r, index) => ({
-            index,
-            ticker: r.ticker,
-            title: r.title || r.ticker 
-        }));
+        processedPolymarket.forEach((poly) => {
+            const potentialMatches: number[] = [];
 
-        // Iterate through Polymarket records and find semantic matches
-        for (let i = 0; i < polymarketRecords.length; i++) {
-            const polyRecord = polymarketRecords[i];
-            const polyText = polyRecord.title || polyRecord.ticker;
+            processedKalshi.forEach((kalshi) => {
+                const similarity = this.textProcessor.calculateTokenSimilarity(
+                    poly.tokens,
+                    kalshi.tokens
+                );
 
-            // Find matches with a similarity threshold of 0.75 (High semantic correlation)
-            const matchedKalshiIndices = await this.vectorService.findMatches(
-                { ticker: polyRecord.ticker, title: polyText },
-                kalshiItems,
-                0.75
-            );
+                if (similarity > 0.3) {
+                    potentialMatches.push(kalshi.index);
+                    relevantPolymarketIndices.add(poly.index);
+                    relevantKalshiIndices.add(kalshi.index);
+                }
+            });
 
-            if (matchedKalshiIndices.length > 0) {
-                quickMatches.set(i, matchedKalshiIndices);
-                relevantPolymarketIndices.add(i);
-                matchedKalshiIndices.forEach(idx => relevantKalshiIndices.add(idx));
+            if (potentialMatches.length > 0) {
+                quickMatches.set(poly.index, potentialMatches);
             }
-        }
+        });
 
         // Filter to only relevant records
         const filteredPolymarket = polymarketRecords.filter((_, i) =>
@@ -151,7 +144,7 @@ export class MatchingEngineService {
             relevantKalshiIndices.has(i)
         );
 
-        console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Semantic filtering complete:'));
+        console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Pre-filtering complete:'));
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Polymarket: ${polymarketRecords.length} → ${filteredPolymarket.length} records`));
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Kalshi: ${kalshiRecords.length} → ${filteredKalshi.length} records`));
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Potential match pairs: ${quickMatches.size}`));
@@ -164,7 +157,7 @@ export class MatchingEngineService {
     }
 
     /**
-     * Main entry point to match markets
+     * Use Claude or consensus to match markets
      */
     async matchMarkets(filters: MatchFilters = {}): Promise<MatchingResult> {
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.cyan('Starting market matching with filters:'), filters);
@@ -182,6 +175,7 @@ export class MatchingEngineService {
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow(`Fetched ${polymarketRecords.length} Polymarket records and ${kalshiRecords.length} Kalshi records`));
 
         if (polymarketRecords.length === 0 || kalshiRecords.length === 0) {
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('No records to match'));
             return {
                 matches: [],
                 totalPolymarketRecords: polymarketRecords.length,
@@ -190,12 +184,12 @@ export class MatchingEngineService {
             };
         }
 
-        // Pre-filter using Semantic Vectors (Async)
+        // Pre-filter using tokenization
         const {
             polymarketRecords: filteredPoly,
             kalshiRecords: filteredKalshi,
             quickMatches
-        } = await this.preFilterRecords(polymarketRecords, kalshiRecords);
+        } = this.preFilterRecords(polymarketRecords, kalshiRecords);
 
         if (filteredPoly.length === 0 || filteredKalshi.length === 0) {
             console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Pre-filtering eliminated all potential matches'));
@@ -207,13 +201,12 @@ export class MatchingEngineService {
             };
         }
 
-        // Process in batches to respect LLM token limits
+        // Process in batches
         const matches: MarketMatch[] = [];
         const polyBatches = this.createBatches(filteredPoly, this.MAX_RECORDS_PER_BATCH);
 
         for (let i = 0; i < polyBatches.length; i++) {
             console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.magenta(`Processing batch ${i + 1}/${polyBatches.length}`));
-            
             const batchMatches = await this.processMatchingBatch(
                 polyBatches[i],
                 filteredKalshi,
@@ -224,7 +217,7 @@ export class MatchingEngineService {
             matches.push(...batchMatches);
         }
 
-        // Remove duplicates and sort by confidence
+        // Remove duplicates and sort
         const uniqueMatches = this.deduplicateMatches(matches);
         const sortedMatches = uniqueMatches.sort((a, b) => b.confidence - a.confidence);
 
@@ -280,6 +273,15 @@ export class MatchingEngineService {
                 quickMatches
             );
 
+            // Get and log statistics
+            const stats = this.consensusService.getConsensusStatistics(consensusMatches);
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Consensus statistics:'));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Total matches: ${stats.totalMatches}`));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Unanimous (100%): ${stats.unanimousMatches}`));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Majority (60-99%): ${stats.majorityMatches}`));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Avg consensus: ${stats.averageConsensusScore}`));
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Avg confidence: ${stats.averageConfidence}`));
+
             // Convert consensus matches to MarketMatch format
             return consensusMatches.map(cm => ({
                 polymarketRecord: polymarketBatch[cm.polymarketIndex],
@@ -308,7 +310,7 @@ export class MatchingEngineService {
 
         try {
             const message = await this.anthropic.messages.create({
-                model: 'claude-sonnet-4-20250514', // Ensure this model ID is current
+                model: 'claude-sonnet-4-20250514',
                 max_tokens: 4000,
                 messages: [
                     {
@@ -329,8 +331,7 @@ export class MatchingEngineService {
     }
 
     /**
-     * Build an optimized prompt using TextProcessor for normalization
-     * and hinting at vector matches.
+     * Build an optimized prompt with tokenized data and hints
      */
     private buildOptimizedPrompt(
         polymarketRecords: PolymarketDataRecord[],
@@ -338,30 +339,36 @@ export class MatchingEngineService {
         quickMatches: Map<number, number[]>
     ): string {
         const polymarketData = polymarketRecords.map((r, i) => {
+            const tokens = this.textProcessor.tokenize(r.ticker);
             const normalized = this.textProcessor.normalize(r.ticker);
             return `${i}. Ticker: ${r.ticker}
    Normalized: ${normalized}
+   Key Terms: ${tokens.join(', ')}
    Price: $${r.price}, Volume: ${r.volume}
    Timestamp: ${r.timestamp}`;
         }).join('\n\n');
 
         const kalshiData = kalshiRecords.map((r, i) => {
+            const tokens = this.textProcessor.tokenize(r.ticker);
             const normalized = this.textProcessor.normalize(r.ticker);
             return `${i}. Ticker: ${r.ticker}
    Normalized: ${normalized}
+   Key Terms: ${tokens.join(', ')}
    Price: $${r.price}, Volume: ${r.volume}
    Timestamp: ${r.timestamp}`;
         }).join('\n\n');
 
         let hints = '';
         if (quickMatches.size > 0) {
-            hints = '\n\nHigh Probability Matches (Semantically Linked):';
+            hints = '\n\nPre-filtered potential matches (high token similarity):';
             quickMatches.forEach((kalshiIndices, polyIndex) => {
-                hints += `\n- Polymarket Item ${polyIndex} is semantically similar to Kalshi Items: ${kalshiIndices.join(', ')}`;
+                hints += `\n- Polymarket ${polyIndex} may match Kalshi: ${kalshiIndices.join(', ')}`;
             });
         }
 
-        return `You are a market matching engine. Your task is to find similar or identical prediction markets between Polymarket and Kalshi.
+        return `You are a market matching engine. Your task is to find similar or identical prediction markets between Polymarket and Kalshi platforms.
+
+Each market includes its normalized form and key terms extracted via tokenization to help with matching.
 
 Polymarket Markets:
 ${polymarketData}
@@ -378,18 +385,24 @@ Please analyze these markets and return matching pairs in the following JSON for
       "kalshiIndex": 0,
       "similarity": "exact|high|medium|low",
       "confidence": 0.95,
-      "reasoning": "Brief explanation"
+      "reasoning": "Brief explanation of why these markets match"
     }
   ]
 }
 
 Matching criteria:
-- "exact": Same event, same outcome.
-- "high": Same event, slightly different phrasing.
-- "medium": Related events.
-- "low": Loosely related.
+- "exact": Same event, same outcome (confidence >= 0.9)
+- "high": Same event, slightly different outcome or time frame (confidence >= 0.75)
+- "medium": Related events, similar outcomes (confidence >= 0.6)
+- "low": Loosely related events (confidence >= 0.5)
 
-Only include matches with confidence >= 0.6. Return valid JSON only.`;
+Consider:
+1. The normalized ticker text and key terms provided
+2. Similar events even with different wording
+3. Time frames and outcomes
+4. Pre-filtered hints (these are algorithmically suggested matches)
+
+Only include matches with confidence >= 0.6. Return valid JSON only, no markdown formatting.`;
     }
 
     /**
@@ -405,12 +418,13 @@ Only include matches with confidence >= 0.6. Return valid JSON only.`;
             const parsed = JSON.parse(jsonText);
 
             if (!parsed.matches || !Array.isArray(parsed.matches)) {
+                console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Invalid response format from Claude'));
                 return [];
             }
 
             const validSimilarities = ['exact', 'high', 'medium', 'low'] as const;
 
-            return parsed.matches
+            const matches: MarketMatch[] = parsed.matches
                 .filter((m: any) => {
                     return (
                         typeof m.polymarketIndex === 'number' &&
@@ -423,21 +437,32 @@ Only include matches with confidence >= 0.6. Return valid JSON only.`;
                     );
                 })
                 .map((m: any) => {
-                    const similarity = validSimilarities.includes(m.similarity) ? m.similarity : 'low';
+                    // Ensure similarity is a valid value
+                    const similarity = validSimilarities.includes(m.similarity) 
+                        ? m.similarity 
+                        : 'low';
+                    
                     return {
                         polymarketRecord: polymarketRecords[m.polymarketIndex],
                         kalshiRecord: kalshiRecords[m.kalshiIndex],
-                        similarity: similarity,
+                        similarity: similarity as 'exact' | 'high' | 'medium' | 'low',
                         confidence: m.confidence,
                         reasoning: m.reasoning || 'No reasoning provided'
                     };
                 });
+
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green(`Parsed ${matches.length} valid matches`));
+            return matches;
         } catch (error) {
-            console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Error parsing response'), error);
+            console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Error parsing Claude response:'), error);
+            console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Response text:'), responseText);
             return [];
         }
     }
 
+    /**
+     * Create batches of records to prevent token overflow
+     */
     private createBatches<T>(records: T[], batchSize: number): T[][] {
         const batches: T[][] = [];
         for (let i = 0; i < records.length; i += batchSize) {
@@ -446,9 +471,13 @@ Only include matches with confidence >= 0.6. Return valid JSON only.`;
         return batches;
     }
 
+    /**
+     * Remove duplicate matches
+     */
     private deduplicateMatches(matches: MarketMatch[]): MarketMatch[] {
         const seen = new Set<string>();
         const unique: MarketMatch[] = [];
+
         for (const match of matches) {
             const key = `${match.polymarketRecord.ticker}:${match.kalshiRecord.ticker}`;
             if (!seen.has(key)) {
@@ -456,28 +485,48 @@ Only include matches with confidence >= 0.6. Return valid JSON only.`;
                 unique.push(match);
             }
         }
+
         return unique;
     }
 
+    /**
+     * Get arbitrage opportunities
+     */
     async findArbitrageOpportunities(
         filters: MatchFilters = {},
         minPriceDifference: number = 0.05
     ): Promise<MarketMatch[]> {
         const result = await this.matchMarkets(filters);
-        return result.matches
-            .filter(match => Math.abs(match.polymarketRecord.price - match.kalshiRecord.price) >= minPriceDifference)
-            .sort((a, b) => {
-                const diffA = Math.abs(a.polymarketRecord.price - a.kalshiRecord.price);
-                const diffB = Math.abs(b.polymarketRecord.price - b.kalshiRecord.price);
-                return diffB - diffA;
-            });
+
+        const arbitrageOpportunities = result.matches.filter(match => {
+            const priceDiff = Math.abs(match.polymarketRecord.price - match.kalshiRecord.price);
+            return priceDiff >= minPriceDifference;
+        });
+
+        return arbitrageOpportunities.sort((a, b) => {
+            const diffA = Math.abs(a.polymarketRecord.price - a.kalshiRecord.price);
+            const diffB = Math.abs(b.polymarketRecord.price - b.kalshiRecord.price);
+            return diffB - diffA;
+        });
     }
 
+    /**
+     * Toggle consensus mode
+     */
+    setConsensusMode(enabled: boolean): void {
+        if (enabled && !this.consensusService) {
+            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Cannot enable consensus mode: API keys not provided'));
+            return;
+        }
+        this.useConsensus = enabled;
+        console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow(`Consensus mode ${enabled ? 'enabled' : 'disabled'}`));
+    }
+
+    /**
+     * Clear the match cache
+     */
     clearCache(): void {
         this.matchCache.clear();
-        if (this.vectorService) {
-             this.vectorService.clearCache();
-        }
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow('Cache cleared'));
     }
 }
