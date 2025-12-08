@@ -6,80 +6,102 @@ interface MatchResultsProps {
 }
 
 export function MatchResults({ matches }: MatchResultsProps) {
-    const getSimilarityClass = (similarity: string) => {
-        switch (similarity) {
-            case 'exact': return styles.exact;
-            case 'high': return styles.high;
-            case 'medium': return styles.medium;
-            case 'low': return styles.low;
-            default: return '';
+    
+    // Helper to calculate profit and strategy
+    const getArbitrageDetails = (match: MarketMatch) => {
+        const pmPrice = match.polymarketRecord.price;
+        const kalshiPrice = match.kalshiRecord.price;
+        const diff = Math.abs(pmPrice - kalshiPrice);
+        const profitPercent = (diff / Math.min(pmPrice, kalshiPrice)) * 100;
+        
+        let strategy = "-";
+        if (pmPrice > kalshiPrice) {
+            strategy = "Buy Kalshi (YES) / Sell PM (YES)";
+        } else {
+            strategy = "Buy PM (YES) / Sell Kalshi (YES)";
         }
+
+        return { diff, profitPercent, strategy };
     };
+
+    if (matches.length === 0) {
+        return (
+            <div className={styles.emptyState}>
+                <h3>No Opportunities Found</h3>
+                <p>Use the matching panel in the sidebar to search for arbitrage.</p>
+            </div>
+        );
+    }
 
     return (
         <div className={styles.container}>
-            <h2 className={styles.title}>Match Results ({matches.length})</h2>
-            
-            {matches.length === 0 ? (
-                <div className={styles.noResults}>
-                    No matches found. Try adjusting your filters.
+            <div className={styles.header}>
+                <h2>High-Potential Matches</h2>
+                <div className={styles.stats}>
+                    Found {matches.length} pairs
                 </div>
-            ) : (
-                <div className={styles.matchList}>
-                    {matches.map((match, index) => {
-                        const priceDiff = Math.abs(match.polymarketRecord.price - match.kalshiRecord.price);
-                        const isArbitrage = priceDiff >= 0.05;
+            </div>
 
-                        return (
-                            <div key={index} className={`${styles.matchCard} ${isArbitrage ? styles.arbitrage : ''}`}>
-                                <div className={styles.matchHeader}>
-                                    <span className={`${styles.similarity} ${getSimilarityClass(match.similarity)}`}>
-                                        {match.similarity.toUpperCase()}
-                                    </span>
-                                    <span className={styles.confidence}>
-                                        {(match.confidence * 100).toFixed(0)}% confidence
-                                    </span>
-                                    {isArbitrage && (
-                                        <span className={styles.arbitrageBadge}>
-                                            ARBITRAGE OPPORTUNITY
+            <div className={styles.tableWrapper}>
+                <table className={styles.arbTable}>
+                    <thead>
+                        <tr>
+                            <th>Confidence</th>
+                            <th>Market Pair</th>
+                            <th>Strategy</th>
+                            <th className={styles.numeric}>PM Price</th>
+                            <th className={styles.numeric}>Kalshi Price</th>
+                            <th className={styles.numeric}>Profit Spread</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {matches.map((match, index) => {
+                            const { diff, profitPercent, strategy } = getArbitrageDetails(match);
+                            const isProfitable = diff >= 0.05; // Arbitrary threshold for visual styling
+
+                            return (
+                                <tr key={index} className={isProfitable ? styles.opportunityRow : ''}>
+                                    <td>
+                                        <span className={`${styles.badge} ${styles[match.similarity]}`}>
+                                            {match.similarity}
                                         </span>
-                                    )}
-                                </div>
-
-                                <div className={styles.markets}>
-                                    <div className={styles.market}>
-                                        <div className={styles.marketHeader}>Polymarket</div>
-                                        <div className={styles.marketDetails}>
-                                            <div><strong>Ticker:</strong> {match.polymarketRecord.ticker}</div>
-                                            <div><strong>Price:</strong> ${match.polymarketRecord.price.toFixed(4)}</div>
-                                            <div><strong>Volume:</strong> {match.polymarketRecord.volume.toLocaleString()}</div>
+                                        <div className={styles.confidenceScore}>
+                                            {(match.confidence * 100).toFixed(0)}% match
                                         </div>
-                                    </div>
-
-                                    <div className={styles.market}>
-                                        <div className={styles.marketHeader}>Kalshi</div>
-                                        <div className={styles.marketDetails}>
-                                            <div><strong>Ticker:</strong> {match.kalshiRecord.ticker}</div>
-                                            <div><strong>Price:</strong> ${match.kalshiRecord.price.toFixed(4)}</div>
-                                            <div><strong>Volume:</strong> {match.kalshiRecord.volume.toLocaleString()}</div>
+                                    </td>
+                                    <td className={styles.marketPair}>
+                                        <div className={styles.pairItem}>
+                                            <span className={styles.platformLabel}>PM</span>
+                                            {match.polymarketRecord.ticker}
                                         </div>
-                                    </div>
-                                </div>
-
-                                <div className={styles.reasoning}>
-                                    <strong>Reasoning:</strong> {match.reasoning}
-                                </div>
-
-                                {isArbitrage && (
-                                    <div className={styles.priceDiff}>
-                                        Price Difference: ${priceDiff.toFixed(4)}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
+                                        <div className={styles.pairItem}>
+                                            <span className={styles.platformLabel}>KS</span>
+                                            {match.kalshiRecord.ticker}
+                                        </div>
+                                    </td>
+                                    <td className={styles.strategyCell}>
+                                        {strategy}
+                                    </td>
+                                    <td className={styles.numeric}>${match.polymarketRecord.price.toFixed(3)}</td>
+                                    <td className={styles.numeric}>${match.kalshiRecord.price.toFixed(3)}</td>
+                                    <td className={styles.numeric}>
+                                        <span className={isProfitable ? styles.profitPositive : styles.profitNeutral}>
+                                            {profitPercent.toFixed(2)}%
+                                        </span>
+                                        <div className={styles.diffVal}>${diff.toFixed(3)}</div>
+                                    </td>
+                                    <td>
+                                        <button className={styles.executeButton}>
+                                            Execute
+                                        </button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }

@@ -1,43 +1,46 @@
 .tableContainer {
-    background: white;
+    background: var(--bg-panel);
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--border-color);
     overflow: hidden;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
 }
 
 .tableHeader {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 1.5rem;
-    border-bottom: 2px solid #e0e0e0;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
 }
 
 .tableTitle {
     margin: 0;
-    font-size: 1.5rem;
-    color: #2c3e50;
+    font-size: 1.25rem;
+    color: var(--text-primary);
 }
 
 .refreshButton {
     padding: 0.5rem 1rem;
-    background-color: #3498db;
-    color: white;
-    border: none;
+    background-color: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
     border-radius: 4px;
     cursor: pointer;
-    font-size: 0.9rem;
-    transition: background-color 0.2s;
+    font-size: 0.85rem;
+    transition: all 0.2s;
 }
 
 .refreshButton:hover {
-    background-color: #2980b9;
+    background-color: var(--border-color);
+    color: white;
 }
 
 .tableWrapper {
-    overflow-x: auto;
-    max-height: 500px;
-    overflow-y: auto;
+    overflow: auto;
+    flex: 1;
 }
 
 .table {
@@ -46,77 +49,76 @@
 }
 
 .table thead {
-    background-color: #f8f9fa;
+    background-color: rgba(0,0,0,0.2);
     position: sticky;
     top: 0;
     z-index: 10;
 }
 
 .table th {
-    padding: 0.25rem;
+    padding: 1rem;
     text-align: left;
     font-weight: 600;
-    color: #2c3e50;
-    border-bottom: 2px solid #e0e0e0;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.85rem;
+    text-transform: uppercase;
 }
 
 .table td {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid #f0f0f0;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
 }
 
 .table tbody tr:hover {
-    background-color: #f8f9fa;
-}
-
-.marketName {
-    max-width: 400px;
+    background-color: var(--bg-panel-hover);
 }
 
 .name {
     font-weight: 500;
-    color: #2c3e50;
+    color: var(--text-primary);
     margin-bottom: 0.25rem;
 }
 
 .outcome,
 .subtitle {
     font-size: 0.85rem;
-    color: #7f8c8d;
+    color: var(--text-secondary);
     font-style: italic;
 }
 
 .price {
     font-weight: 600;
-    color: #27ae60;
-    white-space: nowrap;
+    color: var(--accent-success);
+    font-family: monospace;
 }
 
 .volume {
-    color: #7f8c8d;
-    white-space: nowrap;
+    color: var(--text-secondary);
+    font-family: monospace;
 }
 
 .timestamp {
     font-size: 0.85rem;
-    color: #95a5a6;
-    white-space: nowrap;
+    color: var(--text-secondary);
 }
 
 .tableFooter {
-    padding: 1rem 1.5rem;
-    background-color: #f8f9fa;
-    border-top: 1px solid #e0e0e0;
-    font-size: 0.9rem;
-    color: #7f8c8d;
+    padding: 0.75rem 1.5rem;
+    background-color: rgba(0,0,0,0.2);
+    border-top: 1px solid var(--border-color);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
 }
 
 .loading,
 .error {
     padding: 2rem;
     text-align: center;
+    color: var(--text-secondary);
 }
 
 .error {
-    color: #e74c3c;
+    color: var(--accent-danger);
 }

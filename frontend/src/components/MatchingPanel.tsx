@@ -10,8 +10,9 @@ interface MatchingPanelProps {
 
 export function MatchingPanel({ onMatchStart, onMatchComplete, isMatching }: MatchingPanelProps) {
     const [filters, setFilters] = useState<MatchFilters>({
-        limit: 20
+        limit: 50
     });
+    const [minProfit, setMinProfit] = useState(1.0);
     const [error, setError] = useState<string | null>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -22,9 +23,7 @@ export function MatchingPanel({ onMatchStart, onMatchComplete, isMatching }: Mat
         try {
             const response = await fetch('/api/matching/match', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(filters)
             });
 
@@ -43,87 +42,72 @@ export function MatchingPanel({ onMatchStart, onMatchComplete, isMatching }: Mat
     };
 
     return (
-        <div className={styles.panel}>
-            <h2 className={styles.title}>Matching Engine</h2>
-            
+        <div className={styles.panelContainer}>
             <form onSubmit={handleSubmit} className={styles.form}>
-                <div className={styles.formGrid}>
-                    <div className={styles.formGroup}>
-                        <label htmlFor="polymarketTicker">Polymarket Ticker (optional)</label>
+                
+                <div className={styles.section}>
+                    <h3 className={styles.sectionTitle}>Market Matching</h3>
+                    
+                    <div className={styles.inputGroup}>
+                        <label>Keyword Search</label>
                         <input
                             type="text"
-                            id="polymarketTicker"
-                            value={filters.polymarketTicker || ''}
+                            className={styles.input}
+                            placeholder="e.g. 'Election', 'Fed'"
                             onChange={(e) => setFilters({ ...filters, polymarketTicker: e.target.value || undefined })}
-                            placeholder="e.g., market-id-123"
-                            disabled={isMatching}
                         />
                     </div>
 
-                    <div className={styles.formGroup}>
-                        <label htmlFor="kalshiTicker">Kalshi Ticker (optional)</label>
+                    <div className={styles.inputGroup}>
+                         <label>Polymarket ID (Optional)</label>
                         <input
                             type="text"
-                            id="kalshiTicker"
-                            value={filters.kalshiTicker || ''}
-                            onChange={(e) => setFilters({ ...filters, kalshiTicker: e.target.value || undefined })}
-                            placeholder="e.g., TICKER-NAME"
-                            disabled={isMatching}
-                        />
-                    </div>
-
-                    <div className={styles.formGroup}>
-                        <label htmlFor="startTimestamp">Start Timestamp (optional)</label>
-                        <input
-                            type="number"
-                            id="startTimestamp"
-                            value={filters.startTimestamp || ''}
-                            onChange={(e) => setFilters({ ...filters, startTimestamp: e.target.value ? parseInt(e.target.value) : undefined })}
-                            placeholder="Unix timestamp"
-                            disabled={isMatching}
-                        />
-                    </div>
-
-                    <div className={styles.formGroup}>
-                        <label htmlFor="endTimestamp">End Timestamp (optional)</label>
-                        <input
-                            type="number"
-                            id="endTimestamp"
-                            value={filters.endTimestamp || ''}
-                            onChange={(e) => setFilters({ ...filters, endTimestamp: e.target.value ? parseInt(e.target.value) : undefined })}
-                            placeholder="Unix timestamp"
-                            disabled={isMatching}
-                        />
-                    </div>
-
-                    <div className={styles.formGroup}>
-                        <label htmlFor="limit">Limit</label>
-                        <input
-                            type="number"
-                            id="limit"
-                            value={filters.limit || 20}
-                            onChange={(e) => setFilters({ ...filters, limit: parseInt(e.target.value) || 20 })}
-                            min="1"
-                            max="100"
-                            disabled={isMatching}
+                            className={styles.input}
+                            placeholder="Market ID..."
+                            onChange={(e) => setFilters({ ...filters, polymarketTicker: e.target.value || undefined })}
                         />
                     </div>
                 </div>
 
-                {error && (
-                    <div className={styles.error}>
-                        Error: {error}
+                <div className={styles.section}>
+                    <h3 className={styles.sectionTitle}>Arbitrage Filters</h3>
+                    
+                    <div className={styles.inputGroup}>
+                        <label>Min. Profit Margin (%)</label>
+                        <div className={styles.rangeWrapper}>
+                            <input 
+                                type="range" 
+                                min="0.5" 
+                                max="10" 
+                                step="0.5"
+                                value={minProfit}
+                                onChange={(e) => setMinProfit(parseFloat(e.target.value))}
+                                className={styles.range}
+                            />
+                            <span className={styles.rangeValue}>{minProfit}%</span>
+                        </div>
                     </div>
-                )}
+
+                    <div className={styles.inputGroup}>
+                        <label>Analysis Limit</label>
+                        <input
+                            type="number"
+                            className={styles.input}
+                            value={filters.limit || 50}
+                            onChange={(e) => setFilters({ ...filters, limit: parseInt(e.target.value) || 20 })}
+                        />
+                    </div>
+                </div>
+
+                {error && <div className={styles.error}>{error}</div>}
 
                 <button 
                     type="submit" 
-                    className={styles.submitButton}
+                    className={styles.analyzeButton}
                     disabled={isMatching}
                 >
-                    {isMatching ? 'Matching...' : 'Start Matching'}
+                    {isMatching ? 'Analyzing...' : 'Analyze Markets'}
                 </button>
-                
             </form>
         </div>
     );
