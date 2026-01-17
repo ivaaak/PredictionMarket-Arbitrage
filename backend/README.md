@@ -90,13 +90,13 @@ The application is structured around a multi-threaded architecture to ensure the
 
 ### 📂 File Structure Highlights
 
-| File Path | Description | Update Status |
+| File Path | Description |
 | :--- | :--- | :--- |
-| `src/server.ts` | Main server entry point. Spawns the Ingestor Worker. **Now uses `PostgresClient`**. | **Updated** |
-| `src/database/postgres.client.ts` | **New file.** Replaces `sqlite.client.ts`. Handles all database connections and CRUD operations using the `pg` driver. | **New** |
-| `src/services/vector-matching.service.ts` | **New file.** Handles local vector embedding generation and cosine similarity calculation. | **New** |
-| `src/services/matching-engine.service.ts` | **Core logic.** Orchestrates matching, now using **VectorMatchingService** for pre-filtering and handling the necessary `async` operations. | **Updated** |
-| `src/workers/data-ingestor.ts` | Worker thread logic for data streaming. **Now initializes and uses `PostgresClient`**. | **Updated** |
+| `src/server.ts` | Main server entry point. Spawns the Ingestor Worker. |
+| `src/database/postgres.client.ts` | Handles all database connections and CRUD operations using the `pg` driver. |
+| `src/services/vector-matching.service.ts` |  Handles local vector embedding generation and cosine similarity calculation. |
+| `src/services/matching-engine.service.ts` | **Core logic.** Orchestrates matching, now using **VectorMatchingService** for pre-filtering and handling the necessary `async` operations. | 
+| `src/workers/data-ingestor.ts` | Worker thread logic for data streaming. Initializes and uses `PostgresClient`**. |
 
 -----
 

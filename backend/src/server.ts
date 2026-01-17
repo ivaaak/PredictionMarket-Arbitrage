@@ -3,7 +3,6 @@ import { Worker } from 'worker_threads';
 import path from 'path';
 import chalk from 'chalk';
 import { PORT } from './config';
-import { SQLiteClient } from './database/sqlite.client';
 import polymarketRoutes from './controller/polymarket.controller';
 import kalshiRoutes from './controller/kalshi.controller';
 import matchingRoutes from './controller/matching.controller';
@@ -70,11 +69,8 @@ function stopIngestorWorkerThread() {
 
 
 async function startServer() {
-    // Initialize DB client for the main thread (for API reads/writes)
-    SQLiteClient.initialize();
-    
     // Start data ingestion in a separate thread (I/O-bound)
-    startIngestorWorkerThread();
+    // startIngestorWorkerThread();
 
     const app = express();
     app.use(express.json());

@@ -4,11 +4,11 @@ import { KalshiService } from '../services/kalshi.service';
 const kalshiRouter = Router();
 
 // Get all Kalshi records
-kalshiRouter.get('/', (req, res) => {
+kalshiRouter.get('/', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 100;
         const offset = parseInt(req.query.offset as string) || 0;
-        const data = KalshiService.getAll(limit, offset);
+        const data = await KalshiService.getAll(limit, offset);
         res.json({ success: true, data, count: data.length });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -16,9 +16,9 @@ kalshiRouter.get('/', (req, res) => {
 });
 
 // Get total count
-kalshiRouter.get('/count', (req, res) => {
+kalshiRouter.get('/count', async (req, res) => {
     try {
-        const count = KalshiService.getCount();
+        const count = await KalshiService.getCount();
         res.json({ success: true, count });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -26,9 +26,9 @@ kalshiRouter.get('/count', (req, res) => {
 });
 
 // Get latest for each ticker
-kalshiRouter.get('/latest/all', (req, res) => {
+kalshiRouter.get('/latest/all', async (req, res) => {
     try {
-        const data = KalshiService.getLatestByTicker();
+        const data = await KalshiService.getLatestByTicker();
         res.json({ success: true, data, count: data.length });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -36,14 +36,14 @@ kalshiRouter.get('/latest/all', (req, res) => {
 });
 
 // Get by time range
-kalshiRouter.get('/timerange', (req, res) => {
+kalshiRouter.get('/timerange', async (req, res) => {
     try {
         const start = parseInt(req.query.start as string);
         const end = parseInt(req.query.end as string);
         if (isNaN(start) || isNaN(end)) {
             return res.status(400).json({ success: false, error: 'Invalid start or end timestamp' });
         }
-        const data = KalshiService.getByTimeRange(start, end);
+        const data = await KalshiService.getByTimeRange(start, end);
         res.json({ success: true, data, count: data.length });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -51,11 +51,11 @@ kalshiRouter.get('/timerange', (req, res) => {
 });
 
 // Get by ticker
-kalshiRouter.get('/ticker/:ticker', (req, res) => {
+kalshiRouter.get('/ticker/:ticker', async (req, res) => {
     try {
         const ticker = req.params.ticker;
         const limit = parseInt(req.query.limit as string) || 100;
-        const data = KalshiService.getByTicker(ticker, limit);
+        const data = await KalshiService.getByTicker(ticker, limit);
         res.json({ success: true, data, count: data.length });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -63,10 +63,10 @@ kalshiRouter.get('/ticker/:ticker', (req, res) => {
 });
 
 // Get by ID
-kalshiRouter.get('/:id', (req, res) => {
+kalshiRouter.get('/:id', async (req, res) => {
     try {
         const id = parseInt(req.params.id);
-        const data = KalshiService.getById(id);
+        const data = await KalshiService.getById(id);
         if (data) {
             res.json({ success: true, data });
         } else {

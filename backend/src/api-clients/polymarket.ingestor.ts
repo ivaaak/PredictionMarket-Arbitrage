@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { PolymarketClient } from './polymarket.client';
-import { SQLiteClient, MarketData } from '../database/sqlite.client';
+import { PostgresClient, MarketData } from '../database/postgres.client';
 
 // The type of data coming directly from the WebSocket client
 interface PolymarketUpdate {
@@ -14,7 +14,7 @@ interface PolymarketUpdate {
 
 /**
  * This function handles every new trade update received from the WebSocket
- * and persists it to the database using the provided SQLiteClient.
+ * and persists it to the database using the provided PostgresClient.
  */
 const handleMarketUpdate = (data: PolymarketUpdate) => {
     // 1. Map the incoming Polymarket data to the required MarketData interface
@@ -36,12 +36,12 @@ const handleMarketUpdate = (data: PolymarketUpdate) => {
     
     // 2. Use your exported client method to save the data
     try {
-        const lastID = SQLiteClient.savePolymarketData(dataToSave);
+        const lastID = PostgresClient.savePolymarketData(dataToSave);
         console.log(chalk.magenta.bold('[INGEST-POLYMARKET]'), chalk.green(`Successfully saved. Row ID: ${lastID}`));
     } catch (e) {
         console.error(
             chalk.magenta.bold('[INGEST-POLYMARKET]'), 
-            chalk.red(`SQLite write failed for market ${dataToSave.ticker}:`), 
+            chalk.red(`Postgres write failed for market ${dataToSave.ticker}:`), 
             e
         );
     }

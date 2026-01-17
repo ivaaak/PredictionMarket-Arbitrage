@@ -7,7 +7,7 @@ backend/
 │   │   └── polymarket.client.ts     (Fetches Polymarket data)
 │   ├── config.ts                    (Environment variables: Redis, API keys)
 │   ├── database/
-│   │   └── sqlite.client.ts         (Handles connection and persistence to database.db)
+│   │   └── Postgres.client.ts         (Handles connection and persistence to database.db)
 │   ├── queues/
 │   │   ├── data-ingestion.queue.ts  (BullMQ Queue setup for adding jobs)
 │   │   └── market-scheduler.ts      (Logic to periodically enqueue market fetching jobs)
@@ -15,9 +15,9 @@ backend/
 │   ├── types/
 │   │   └── market.ts                (Type definitions: KalshiMarketData, NormalizedMarketData, etc.)
 │   └── workers/
-│       └── data-processor.worker.ts (BullMQ Worker: Normalizes and saves data to SQLite)
+│       └── data-processor.worker.ts (BullMQ Worker: Normalizes and saves data to Postgres)
 ├── package.json
 ├── tsconfig.json
-└── database.db                      (The SQLite file, created on first run)
+└── database.db                      (The Postgres file, created on first run)
 
 

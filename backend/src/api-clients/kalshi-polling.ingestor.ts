@@ -1,10 +1,10 @@
 import chalk from 'chalk';
 import { KalshiPollingClient, KalshiPollingUpdate } from './kalshi.polling.client';
-import { SQLiteClient, MarketData } from '../database/sqlite.client';
+import { MarketData, PostgresClient } from '../database/postgres.client';
 
 /**
  * This function handles every market update received from polling
- * and persists it to the database using the provided SQLiteClient.
+ * and persists it to the database using the provided PostgresClient.
  */
 const handleMarketUpdate = (data: KalshiPollingUpdate) => {
     // Map the incoming Kalshi data to the required MarketData interface
@@ -25,12 +25,12 @@ const handleMarketUpdate = (data: KalshiPollingUpdate) => {
     );
     
     try {
-        const lastID = SQLiteClient.saveKalshiData(dataToSave);
+        const lastID = PostgresClient.saveKalshiData(dataToSave);
         console.log(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.green(`Successfully saved. Row ID: ${lastID}`));
     } catch (e) {
         console.error(
             chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), 
-            chalk.red(`SQLite write failed for market ${dataToSave.ticker}:`), 
+            chalk.red(`Postgres write failed for market ${dataToSave.ticker}:`), 
             e
         );
     }

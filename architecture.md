@@ -12,7 +12,7 @@ graph TB
     subgraph "Worker Thread - Data Ingestion"
         PMI[Polymarket Ingestor<br/>WebSocket Client]
         KLI[Kalshi Ingestor<br/>Polling Client]
-        WDB[SQLite Client<br/>Write Operations]
+        WDB[Postgres Client<br/>Write Operations]
     end
 
     subgraph "Main Thread - Express Server"
@@ -30,11 +30,11 @@ graph TB
             CACHE[Match Cache<br/>LRU + TTL]
         end
         
-        RDB[SQLite Client<br/>Read Operations]
+        RDB[Postgres Client<br/>Read Operations]
     end
 
     subgraph "Database"
-        DB[(SQLite Database<br/>database.db)]
+        DB[(Postgres Database<br/>database.db)]
         PMT[polymarket_data table]
         KLT[kalshi_data table]
     end
@@ -88,7 +88,7 @@ sequenceDiagram
     participant PM as Polymarket API
     participant KL as Kalshi API
     participant Worker as Worker Thread
-    participant DB as SQLite Database
+    participant DB as Postgres Database
     participant API as Express API
     participant Client as API Client
     participant AI as Claude AI
@@ -132,7 +132,7 @@ sequenceDiagram
 ```mermaid
 graph LR
     subgraph "Data Layer"
-        DB[(SQLite)]
+        DB[(Postgres)]
     end
     
     subgraph "Service Layer"
@@ -228,7 +228,7 @@ graph TB
             KLT[Data Transformer]
         end
         
-        DBC[SQLite Client]
+        DBC[Postgres Client]
     end
     
     subgraph "Database"
@@ -340,7 +340,7 @@ graph LR
     B -->|/api/kalshi| D[Kalshi Controller]
     B -->|/api/matching| E[Matching Controller]
     
-    C --> F[SQLite Client]
+    C --> F[Postgres Client]
     D --> F
     E --> G[Matching Engine]
     

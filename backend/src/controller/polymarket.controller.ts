@@ -4,11 +4,11 @@ import { PolymarketService } from '../services/polymarket.service';
 const polymarketRouter = Router();
 
 // Get all Polymarket records
-polymarketRouter.get('/', (req, res) => {
+polymarketRouter.get('/', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 100;
         const offset = parseInt(req.query.offset as string) || 0;
-        const data = PolymarketService.getAll(limit, offset);
+        const data = await PolymarketService.getAll(limit, offset);
         res.json({ success: true, data, count: data.length });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -16,9 +16,9 @@ polymarketRouter.get('/', (req, res) => {
 });
 
 // Get total count
-polymarketRouter.get('/count', (req, res) => {
+polymarketRouter.get('/count', async (req, res) => {
     try {
-        const count = PolymarketService.getCount();
+        const count = await PolymarketService.getCount();
         res.json({ success: true, count });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -26,9 +26,9 @@ polymarketRouter.get('/count', (req, res) => {
 });
 
 // Get latest for each ticker
-polymarketRouter.get('/latest/all', (req, res) => {
+polymarketRouter.get('/latest/all', async (req, res) => {
     try {
-        const data = PolymarketService.getLatestByTicker();
+        const data = await PolymarketService.getLatestByTicker();
         res.json({ success: true, data, count: data.length });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -36,14 +36,14 @@ polymarketRouter.get('/latest/all', (req, res) => {
 });
 
 // Get by time range
-polymarketRouter.get('/timerange', (req, res) => {
+polymarketRouter.get('/timerange', async (req, res) => {
     try {
         const start = parseInt(req.query.start as string);
         const end = parseInt(req.query.end as string);
         if (isNaN(start) || isNaN(end)) {
             return res.status(400).json({ success: false, error: 'Invalid start or end timestamp' });
         }
-        const data = PolymarketService.getByTimeRange(start, end);
+        const data = await PolymarketService.getByTimeRange(start, end);
         res.json({ success: true, data, count: data.length });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -51,11 +51,11 @@ polymarketRouter.get('/timerange', (req, res) => {
 });
 
 // Get by ticker
-polymarketRouter.get('/ticker/:ticker', (req, res) => {
+polymarketRouter.get('/ticker/:ticker', async (req, res) => {
     try {
         const ticker = req.params.ticker;
         const limit = parseInt(req.query.limit as string) || 100;
-        const data = PolymarketService.getByTicker(ticker, limit);
+        const data = await PolymarketService.getByTicker(ticker, limit);
         res.json({ success: true, data, count: data.length });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
@@ -63,10 +63,10 @@ polymarketRouter.get('/ticker/:ticker', (req, res) => {
 });
 
 // Get by ID
-polymarketRouter.get('/:id', (req, res) => {
+polymarketRouter.get('/:id', async (req, res) => {
     try {
         const id = parseInt(req.params.id);
-        const data = PolymarketService.getById(id);
+        const data = await PolymarketService.getById(id);
         if (data) {
             res.json({ success: true, data });
         } else {

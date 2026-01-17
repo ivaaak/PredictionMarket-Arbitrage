@@ -247,7 +247,7 @@ Cached Results
 
 ### 4\. Database Schema (PostgreSQL)
 
-The database has been migrated from SQLite to **PostgreSQL**. The schema remains functionally the same, but data types and primary key definition follow PostgreSQL conventions (e.g., using `SERIAL` instead of `AUTOINCREMENT`).
+The database has been migrated from Postgres to **PostgreSQL**. The schema remains functionally the same, but data types and primary key definition follow PostgreSQL conventions (e.g., using `SERIAL` instead of `AUTOINCREMENT`).
 
 **Polymarket Table:**
 

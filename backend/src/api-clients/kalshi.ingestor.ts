@@ -1,5 +1,5 @@
+import { MarketData, PostgresClient } from '../database/postgres.client';
 import { KalshiClient } from './kalshi.client';
-import { SQLiteClient, MarketData } from '../database/sqlite.client';
 import { OutgoingHttpHeaders } from 'http';
 
 // The type of data coming directly from the WebSocket client
@@ -13,7 +13,7 @@ interface KalshiUpdate {
 
 /**
  * This function handles every new price/trade update received from the WebSocket
- * and persists it to the database using the provided SQLiteClient.
+ * and persists it to the database using the provided PostgresClient.
  */
 const handleMarketUpdate = (data: KalshiUpdate) => {
     // 1. Map the incoming Kalshi data to the required MarketData interface
@@ -31,10 +31,10 @@ const handleMarketUpdate = (data: KalshiUpdate) => {
     
     // 2. Use your exported client method to save the data
     try {
-        const lastID = SQLiteClient.saveKalshiData(dataToSave);
+        const lastID = PostgresClient.saveKalshiData(dataToSave);
         console.log(`[DB] Successfully saved Kalshi data. Row ID: ${lastID}`);
     } catch (e) {
-        console.error(`[DB ERROR] SQLite write failed for Kalshi market ${dataToSave.ticker}:`, e);
+        console.error(`[DB ERROR] Postgres write failed for Kalshi market ${dataToSave.ticker}:`, e);
     }
 };
 
