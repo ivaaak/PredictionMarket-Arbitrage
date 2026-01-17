@@ -14,16 +14,26 @@ export function PolymarketTable() {
     const fetchData = async () => {
         try {
             setLoading(true);
+            setError(null);
             const response = await fetch('/api/polymarket?limit=50');
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
             const result = await response.json();
             
-            if (result.success) {
+            if (result.success && Array.isArray(result.data)) {
                 setData(result.data);
+            } else if (Array.isArray(result)) {
+                setData(result);
             } else {
-                setError(result.error);
+                setError(result.error || 'Invalid data format received');
+                setData([]);
             }
         } catch (err) {
-            setError(String(err));
+            setError(err instanceof Error ? err.message : String(err));
+            setData([]);
         } finally {
             setLoading(false);
         }
@@ -67,21 +77,33 @@ export function PolymarketTable() {
                         </tr>
                     </thead>
                     <tbody>
-                        {data.map((record) => (
-                            <tr key={record.id}>
-                                <td className={styles.marketName}>
-                                    <div className={styles.name}>{record.title || record.ticker}</div>
-                                    {record.outcome && (
-                                        <div className={styles.outcome}>{record.outcome}</div>
-                                    )}
-                                </td>
-                                <td className={styles.price}>${record.price.toFixed(4)}</td>
-                                <td className={styles.volume}>{record.volume.toLocaleString()}</td>
-                                <td className={styles.timestamp}>
-                                    {new Date(record.timestamp * 1000).toLocaleString()}
+                        {data.length === 0 ? (
+                            <tr>
+                                <td colSpan={4} className={styles.noData}>
+                                    No data available
                                 </td>
                             </tr>
-                        ))}
+                        ) : (
+                            data.map((record) => (
+                                <tr key={record.id}>
+                                    <td className={styles.marketName}>
+                                        <div className={styles.name}>{record.title || record.ticker}</div>
+                                        {record.outcome && (
+                                            <div className={styles.outcome}>{record.outcome}</div>
+                                        )}
+                                    </td>
+                                    <td className={styles.price}>
+                                        ${Number(record.price).toFixed(4)}
+                                    </td>
+                                    <td className={styles.volume}>
+                                        {Number(record.volume).toLocaleString()}
+                                    </td>
+                                    <td className={styles.timestamp}>
+                                        {new Date(Number(record.timestamp) * 1000).toLocaleString()}
+                                    </td>
+                                </tr>
+                            ))
+                        )}
                     </tbody>
                 </table>
             </div>

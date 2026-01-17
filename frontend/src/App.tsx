@@ -27,7 +27,7 @@ function App() {
             {/* Left Sidebar */}
             <aside className={styles.sidebar}>
                 <div className={styles.brand}>
-                    <h1>ArbiDex</h1>
+                    <h1>arbitRage</h1>
                 </div>
                 <div className={styles.sidebarContent}>
                     <MatchingPanel
