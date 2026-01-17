@@ -8,36 +8,6 @@
     flex-direction: column;
 }
 
-.tableHeader {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.tableTitle {
-    margin: 0;
-    font-size: 1.25rem;
-    color: var(--text-primary);
-}
-
-.refreshButton {
-    padding: 0.5rem 1rem;
-    background-color: transparent;
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: all 0.2s;
-}
-
-.refreshButton:hover {
-    background-color: var(--border-color);
-    color: white;
-}
-
 .tableWrapper {
     overflow: auto;
     flex: 1;
@@ -66,7 +36,7 @@
 }
 
 .table td {
-    padding: 1rem;
+    padding: 0.5rem;
     border-bottom: 1px solid var(--border-color);
     color: var(--text-primary);
 }
@@ -75,35 +45,156 @@
     background-color: var(--bg-panel-hover);
 }
 
-.name {
-    font-weight: 500;
-    color: var(--text-primary);
-    margin-bottom: 0.25rem;
+/* ID Cell Styles */
+.idCell {
+    text-align: center;
 }
 
-.outcome,
+.badge {
+    display: inline-block;
+    padding: 4px 12px;
+    background: #e3f2fd;
+    color: #1976d2;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+/* Market Name Styles */
+.marketName {
+    max-width: 400px;
+    text-align: left;
+}
+
+.name {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    line-height: 1.4;
+}
+
 .subtitle {
     font-size: 0.85rem;
     color: var(--text-secondary);
+    margin-bottom: 4px;
     font-style: italic;
 }
 
-.price {
+.ticker {
+    font-size: 0.75rem;
+    color: #999;
+    font-family: monospace;
+}
+
+/* Source Cell Styles */
+.sourceCell {
+    text-align: center;
+    padding: 0px !important;
+}
+
+.sourceBadge {
+    display: inline-block;
+    padding: 4px 10px;
+    background: #f3e5f5;
+    color: #7b1fa2;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+/* Price Cell Styles */
+.priceCell {
+    text-align: center;
     font-weight: 600;
-    color: var(--accent-success);
+}
+
+.priceValue {
+    color: #2e7d32;
+    font-size: 1.1rem;
     font-family: monospace;
 }
 
-.volume {
-    color: var(--text-secondary);
+.priceIndicator {
+    color: #4caf50;
+    margin-left: 6px;
+    font-size: 0.7rem;
+}
+
+/* Volume Cell Styles */
+.volumeCell {
+    text-align: center;
+    font-weight: 600;
+    color: var(--text-primary);
     font-family: monospace;
 }
 
+/* Activity Cell Styles */
+.activityCell {
+    text-align: center;
+}
+
+.activeIndicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    color: #2e7d32;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.pulse {
+    width: 8px;
+    height: 8px;
+    background: #4caf50;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.4;
+    }
+}
+
+.inactivePulse {
+    width: 8px;
+    height: 8px;
+    background: #af4c4c;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+@keyframes inactivePulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.4;
+    }
+}
+
+.inactiveIndicator {
+    display: inline-block;
+    padding: 4px 12px;
+    background: #fafafa;
+    color: #9e9e9e;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+/* Timestamp Styles */
 .timestamp {
     font-size: 0.85rem;
     color: var(--text-secondary);
 }
 
+/* Footer Styles */
 .tableFooter {
     padding: 0.75rem 1.5rem;
     background-color: rgba(0,0,0,0.2);
@@ -112,6 +203,7 @@
     color: var(--text-secondary);
 }
 
+/* Loading and Error States */
 .loading,
 .error {
     padding: 2rem;
@@ -121,4 +213,10 @@
 
 .error {
     color: var(--accent-danger);
+}
+
+.noData {
+    text-align: center;
+    color: var(--text-secondary);
+    font-style: italic;
 }

@@ -59,44 +59,64 @@ export function KalshiTable() {
 
     return (
         <div className={styles.tableContainer}>
-            <div className={styles.tableHeader}>
-                <h2 className={styles.tableTitle}>Kalshi Markets</h2>
-                <button onClick={fetchData} className={styles.refreshButton}>
-                    Refresh
-                </button>
-            </div>
-            
             <div className={styles.tableWrapper}>
                 <table className={styles.table}>
                     <thead>
                         <tr>
+                            <th>ID</th>
                             <th>Market Name</th>
+                            <th>Source</th>
                             <th>Price</th>
                             <th>Volume</th>
+                            <th>Activity</th>
                             <th>Timestamp</th>
                         </tr>
                     </thead>
                     <tbody>
                         {data.length === 0 ? (
                             <tr>
-                                <td colSpan={4} className={styles.noData}>
+                                <td colSpan={7} className={styles.noData}>
                                     No data available
                                 </td>
                             </tr>
                         ) : (
                             data.map((record) => (
                                 <tr key={record.id}>
+                                    <td className={styles.idCell}>
+                                        <span className={styles.badge}>{record.id}</span>
+                                    </td>
                                     <td className={styles.marketName}>
                                         <div className={styles.name}>{record.title || record.ticker}</div>
                                         {record.subtitle && (
                                             <div className={styles.subtitle}>{record.subtitle}</div>
                                         )}
+                                        <div className={styles.ticker}>{record.ticker}</div>
                                     </td>
-                                    <td className={styles.price}>
-                                        ${Number(record.price).toFixed(4)}
+                                    <td className={styles.sourceCell}>
+                                        <span className={styles.sourceBadge}>
+                                            {record.source}
+                                        </span>
                                     </td>
-                                    <td className={styles.volume}>
+                                    <td className={styles.priceCell}>
+                                        <span className={styles.priceValue}>
+                                            ${Number(record.price).toFixed(2)}
+                                        </span>
+                                        {Number(record.price) > 0 && (
+                                            <span className={styles.priceIndicator}>●</span>
+                                        )}
+                                    </td>
+                                    <td className={styles.volumeCell}>
                                         {Number(record.volume).toLocaleString()}
+                                    </td>
+                                    <td className={styles.activityCell}>
+                                        {Number(record.volume) > 0 ? (
+                                            <span className={styles.activeIndicator}>
+                                                <span className={styles.pulse}></span>
+                                                Active
+                                            </span>
+                                        ) : (
+                                            <span className={styles.inactiveIndicator}>Inactive</span>
+                                        )}
                                     </td>
                                     <td className={styles.timestamp}>
                                         {new Date(Number(record.timestamp) * 1000).toLocaleString()}
