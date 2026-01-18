@@ -2,7 +2,7 @@
 
 A real-time prediction market arbitrage detection system that monitors Polymarket and Kalshi platforms, identifies matching markets, and detects profitable arbitrage opportunities using a **Vector Matching Engine** and **Multi-Agent AI Consensus**.
 
----
+
 
 ## 🎯 Overview
 
@@ -13,7 +13,7 @@ This system continuously ingests market data from two major prediction market pl
 
 It stores the data in a **PostgreSQL database**, uses a local **Vector Matching Service** for efficient pre-filtering, and employs a **Multi-Agent LLM Consensus** (Claude, Gemini, OpenAI) to confirm high-confidence market matches and identify arbitrage opportunities.
 
----
+
 
 ## 🏗️ System Architecture
 
@@ -50,13 +50,13 @@ The architecture uses **PostgreSQL** for persistence and a **Vector Matching** l
 │  WORKER THREAD   │                    │  VECTOR MATCHING   │
 │  Data Ingestor   │                    │  MiniLM-L6-v2      │
 │                  │                    └────────────────────┘
-│  ┌────────────┐  │
-│  │ Polymarket │  │
-│  │  Ingestor  │  │
-│  │ (WebSocket)│  │
-│  └─────┬──────┘  │
-│        │         │
-│  ┌─────▼──────┐  │
+│  ┌────────────┐  │                              │
+│  │ Polymarket │  │                              │
+│  │  Ingestor  │  │                    ┌─────────▼──────────┐
+│  │ (WebSocket)│  │                    │   Multi-Agent-LLM  │
+│  └─────┬──────┘  │                    │  Consensus Service │
+│        │         │                    │OpenAI Claude Gemini│
+│  ┌─────▼──────┐  │                    └────────────────────┘
 │  │   Kalshi   │  │
 │  │  Ingestor  │  │
 │  │ (Polling)  │  │
@@ -113,7 +113,6 @@ graph TD
 
 ```
 
----
 
 ## 📊 Data Flow
 
@@ -152,10 +151,7 @@ graph TD
                     ┌──────────▼──────────────┐
                     │  Arbitrage Detection    │
                     └─────────────────────────┘
-
 ```
-
----
 
 ## 🧩 Component Architecture
 
@@ -177,8 +173,6 @@ graph TD
 * **Files:** `src/services/matching-engine.service.ts`, `src/services/vector-matching.service.ts`.
 
 
-```
-
 ## 🔧 Technology Stack
 
 * **Runtime:** Node.js, TypeScript, Worker Threads.
@@ -186,7 +180,6 @@ graph TD
 * **AI/ML:** MiniLM-L6-v2 (Local Embeddings), Claude, Gemini, OpenAI.
 * **APIs:** Polymarket (WebSocket), Kalshi (REST Polling).
 
----
 
 ## 🚀 Getting Started
 
@@ -196,13 +189,11 @@ docker run --name market_db -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=admin
 
 ```
 
-
 2. **Configure Environment**
 Create a `.env` file:
 ```env
 ANTHROPIC_API_KEY=your_key
 DATABASE_URL="postgres://postgres:admin@localhost:5432/market_db"
-
 ```
 
 4. **Run System**
@@ -211,9 +202,6 @@ npm install
 npm run dev
 ```
 
-
----
-
 ## 🧠 Matching Algorithm
 
 1. **Phase 1: Embedding** – Generate vectors for all active market titles.
@@ -221,14 +209,11 @@ npm run dev
 3. **Phase 3: Consensus** – High-probability pairs are verified by multiple LLMs.
 4. **Phase 4: Scoring** – Average confidence scores are generated and cached.
 
----
 
 ## 💰 Arbitrage Detection
 
 Arbitrage is flagged when:
 
-1. **Consensus Confidence** .
-2. **Price Difference** .
+1. **Consensus Confidence** as specified in the UI.
+2. **Price Difference** as specified in the UI.
 3. **Liquidity** meets minimum requirements.
-
----
