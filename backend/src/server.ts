@@ -6,6 +6,7 @@ import { PORT } from './config';
 import polymarketRoutes from './controller/polymarket.controller';
 import kalshiRoutes from './controller/kalshi.controller';
 import matchingRoutes from './controller/matching.controller';
+import resultRoutes from './controller/results.controller';
 
 // 1. Dedicated I/O Worker (for data ingestion/streaming)
 let ingestorWorker: Worker | null = null;
@@ -79,6 +80,8 @@ async function startServer() {
     app.use('/api/polymarket', polymarketRoutes);
     app.use('/api/kalshi', kalshiRoutes);
     app.use('/api/matching', matchingRoutes);
+    app.use('/api/results', resultRoutes);
+
 
     const server = app.listen(PORT, () => {
         console.log(chalk.green.bold(`✓ Server running on port ${PORT}`));

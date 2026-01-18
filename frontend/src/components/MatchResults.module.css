@@ -28,8 +28,24 @@
     font-size: 1.25rem;
 }
 
+.headerActions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
 .stats {
     color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.statsBadge {
+    display: inline-block;
+    padding: 6px 16px;
+    background: #e3f2fd;
+    color: #1976d2;
+    border-radius: 20px;
+    font-weight: 600;
     font-size: 0.9rem;
 }
 
@@ -56,6 +72,9 @@
     position: sticky;
     top: 0;
     border-bottom: 1px solid var(--border-color);
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    z-index: 1;
 }
 
 .arbTable td {
@@ -68,43 +87,134 @@
     background-color: var(--bg-panel-hover);
 }
 
+.opportunityRow {
+    background-color: rgba(158, 206, 106, 0.05);
+}
+
+/* ID Cell */
+.idCell {
+    text-align: center;
+}
+
+.matchIdBadge {
+    display: inline-block;
+    padding: 4px 12px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+/* Market Pair */
 .marketPair {
-    max-width: 300px;
+    max-width: 350px;
 }
 
 .pairItem {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.4rem;
     font-size: 0.85rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .platformLabel {
     font-size: 0.7rem;
     font-weight: 700;
-    padding: 2px 4px;
-    border-radius: 3px;
+    padding: 3px 6px;
+    border-radius: 4px;
     background-color: var(--border-color);
     color: var(--text-secondary);
+    min-width: 28px;
+    text-align: center;
 }
 
+.marketTitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* Volume Cell */
+.volumeCell {
+    font-family: 'Roboto Mono', monospace;
+}
+
+.volumeItem {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.3rem;
+    font-size: 0.85rem;
+}
+
+.volumeLabel {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+    min-width: 28px;
+}
+
+.volumeValue {
+    color: var(--text-primary);
+}
+
+/* Strategy Cell */
+.strategyCell {
+    max-width: 200px;
+}
+
+.strategyBadge {
+    display: inline-block;
+    padding: 6px 12px;
+    background: rgba(224, 175, 104, 0.15);
+    color: var(--accent-warning);
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+/* Numeric Cells */
 .numeric {
     text-align: right;
     font-family: 'Roboto Mono', monospace;
 }
 
+.priceValue {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 1rem;
+}
+
 .profitPositive {
     color: var(--accent-success);
     font-weight: 700;
-    font-size: 1rem;
+    font-size: 1.1rem;
 }
 
 .profitNeutral {
     color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.roiPositive {
+    color: var(--accent-success);
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+.roiNeutral {
+    color: var(--text-secondary);
+}
+
+.roiIndicator {
+    color: var(--accent-success);
+    margin-left: 4px;
+    font-size: 1.2rem;
 }
 
 .diffVal {
@@ -113,11 +223,7 @@
     margin-top: 0.25rem;
 }
 
-.strategyCell {
-    color: var(--accent-warning);
-    font-size: 0.85rem;
-}
-
+/* Confidence Badges (Originals) */
 .badge {
     display: inline-block;
     padding: 0.25rem 0.5rem;
@@ -127,10 +233,25 @@
     text-transform: uppercase;
 }
 
-.badge.exact { background: rgba(158, 206, 106, 0.2); color: var(--accent-success); }
-.badge.high { background: rgba(122, 162, 247, 0.2); color: var(--accent-primary); }
-.badge.medium { background: rgba(224, 175, 104, 0.2); color: var(--accent-warning); }
-.badge.low { background: rgba(247, 118, 142, 0.2); color: var(--accent-danger); }
+.badge.exact { 
+    background: rgba(158, 206, 106, 0.2); 
+    color: var(--accent-success); 
+}
+
+.badge.high { 
+    background: rgba(122, 162, 247, 0.2); 
+    color: var(--accent-primary); 
+}
+
+.badge.medium { 
+    background: rgba(224, 175, 104, 0.2); 
+    color: var(--accent-warning); 
+}
+
+.badge.low { 
+    background: rgba(247, 118, 142, 0.2); 
+    color: var(--accent-danger); 
+}
 
 .confidenceScore {
     margin-top: 0.25rem;
@@ -138,6 +259,47 @@
     color: var(--text-secondary);
 }
 
+/* Status Cell */
+.statusCell {
+    text-align: center;
+}
+
+.statusActive {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: #e8f5e9;
+    color: #2e7d32;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.statusDot {
+    width: 8px;
+    height: 8px;
+    background: #4caf50;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.statusInactive {
+    display: inline-block;
+    padding: 4px 12px;
+    background: #fff3e0;
+    color: #e65100;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+/* Execute/Action Button */
 .executeButton {
     background-color: var(--accent-primary);
     color: white;
@@ -146,10 +308,12 @@
     border-radius: 4px;
     cursor: pointer;
     font-weight: 600;
-    transition: background 0.2s;
+    transition: all 0.2s;
+    font-size: 0.85rem;
 }
 
 .executeButton:hover {
     background-color: #618bf4;
     box-shadow: 0 0 10px rgba(122, 162, 247, 0.4);
+    transform: translateY(-1px);
 }

@@ -112,10 +112,11 @@ export function KalshiTable() {
                                         {Number(record.volume) > 0 ? (
                                             <span className={styles.activeIndicator}>
                                                 <span className={styles.pulse}></span>
-                                                Active
                                             </span>
                                         ) : (
-                                            <span className={styles.inactiveIndicator}>Inactive</span>
+                                            <span className={styles.activeIndicator}>
+                                                <span className={styles.inactivePulse}></span>
+                                            </span>
                                         )}
                                     </td>
                                     <td className={styles.timestamp}>

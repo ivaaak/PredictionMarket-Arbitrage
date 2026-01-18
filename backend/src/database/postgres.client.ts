@@ -42,18 +42,40 @@ CREATE TABLE IF NOT EXISTS kalshi_data (
 );
 `;
 
-// New table for persistent matches
 const CREATE_MATCHED_EVENTS_SQL = `
 CREATE TABLE IF NOT EXISTS matched_events (
     id SERIAL PRIMARY KEY,
-    polymarket_ticker TEXT REFERENCES polymarket_data(ticker),
-    kalshi_ticker TEXT REFERENCES kalshi_data(ticker),
-    similarity_score DECIMAL,
-    confidence DECIMAL,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(polymarket_ticker, kalshi_ticker)
+    
+    -- Foreign Keys for Data Integrity
+    polymarket_id INTEGER REFERENCES polymarket_data(id) ON DELETE CASCADE,
+    kalshi_id INTEGER REFERENCES kalshi_data(id) ON DELETE CASCADE,
+
+    -- Normalized Metadata (What makes them a match?)
+    common_title TEXT NOT NULL, -- A cleaned/unified title for the event
+    match_category TEXT,        -- e.g., 'Politics', 'Economics', 'Sports'
+    match_confidence DECIMAL(3, 2), -- 0.00 to 1.00 score (useful if using fuzzy matching)
+
+    -- Side-by-Side Comparison (The "Readable" part)
+    poly_ticker TEXT,
+    poly_price DECIMAL,
+    poly_volume DECIMAL,
+    
+    kalshi_ticker TEXT,
+    kalshi_price DECIMAL,
+    kalshi_volume DECIMAL,
+
+    -- Derived Analytics
+    price_spread DECIMAL GENERATED ALWAYS AS (ABS(poly_price - kalshi_price)) STORED,
+    total_combined_volume DECIMAL GENERATED ALWAYS AS (poly_volume + kalshi_volume) STORED,
+
+    -- Metadata
+    last_sync_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
 );
+
+-- Indexing for performance
+CREATE INDEX IF NOT EXISTS idx_match_spread ON matched_events(price_spread);
+CREATE INDEX IF NOT EXISTS idx_common_title ON matched_events(common_title);
 `;
 
 // New table for price history (TimeSeries)

@@ -42,7 +42,6 @@ export function PolymarketTable() {
     if (loading) {
         return (
             <div className={styles.tableContainer}>
-                <h2 className={styles.tableTitle}>Polymarket Markets</h2>
                 <div className={styles.loading}>Loading...</div>
             </div>
         );
@@ -51,7 +50,6 @@ export function PolymarketTable() {
     if (error) {
         return (
             <div className={styles.tableContainer}>
-                <h2 className={styles.tableTitle}>Polymarket Markets</h2>
                 <div className={styles.error}>Error: {error}</div>
             </div>
         );
@@ -114,7 +112,7 @@ export function PolymarketTable() {
                                         {Number(record.volume).toLocaleString()}
                                     </td>
                                     <td className={styles.activityCell}>
-                                        {Number(record.volume) < 0 ? (
+                                        {Number(record.volume) > 0 ? (
                                             <span className={styles.activeIndicator}>
                                                 <span className={styles.pulse}></span>
                                             </span>
