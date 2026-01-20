@@ -15,11 +15,11 @@ It stores the data in a **PostgreSQL database**, uses a local **Vector Matching 
 
 ## Screenshots:
 
-<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/1.png" width="80%"></img> 
+<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/1.png?token=GHSAT0AAAAAADTOJOIVIWRJ3ADPOGD5WJPI2LP5WRQ" width="80%"></img> 
 
-<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/2.png" width="80%"></img> 
+<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/2.png?token=GHSAT0AAAAAADTOJOIVIWRJ3ADPOGD5WJPI2LP5WRQ" width="80%"></img> 
 
-<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/3.png" width="80%"></img> 
+<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/3.png?token=GHSAT0AAAAAADTOJOIVIWRJ3ADPOGD5WJPI2LP5WRQ" width="80%"></img> 
 
 
 ## 🏗️ System Architecture
