@@ -13,6 +13,13 @@ This system continuously ingests market data from two major prediction market pl
 
 It stores the data in a **PostgreSQL database**, uses a local **Vector Matching Service** for efficient pre-filtering, and employs a **Multi-Agent LLM Consensus** (Claude, Gemini, OpenAI) to confirm high-confidence market matches and identify arbitrage opportunities.
 
+## Screenshots:
+
+<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/1.png" width="80%"></img> 
+
+<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/2.png" width="80%"></img> 
+
+<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/3.png" width="80%"></img> 
 
 
 ## 🏗️ System Architecture
