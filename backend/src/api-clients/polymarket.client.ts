@@ -1,188 +1,200 @@
 // src/api-clients/polymarket.client.ts
+//
+// Polls Polymarket's Gamma API for the catalogue of open markets.
+//
+// This replaced a subscription to the public trade feed. A trade message
+// carries the price of whichever outcome (YES or NO) was traded, so keying rows
+// by market meant the stored price flipped between p and 1-p, only markets that
+// happened to trade were ever seen, and there was no order book to price an
+// arbitrage from. Gamma returns one row per market with the current YES book.
 
-import WebSocket from 'ws';
 import chalk from 'chalk';
-import { POLYMARKET_WEBSOCKET_URL } from '../config';
+import { POLYMARKET_GAMMA_API_BASE } from '../config';
+import { MarketData } from '../database/postgres.client';
 
-// --- Types for Data and Events ---
-
-interface PolymarketMarketData {
-    marketId: string;
-    price: number;
-    volume: number;
-    title?: string;
-    outcome?: string;
-    timestamp?: number;
+// Gamma encodes array fields as JSON strings and numeric fields inconsistently
+// (some as numbers, some as strings), so everything is parsed defensively.
+interface GammaMarket {
+    conditionId?: string;
+    question?: string;
+    description?: string;
+    outcomes?: string;
+    outcomePrices?: string;
+    bestBid?: number | string;
+    bestAsk?: number | string;
+    lastTradePrice?: number | string;
+    volumeNum?: number | string;
+    volume?: number | string;
+    endDate?: string;
+    enableOrderBook?: boolean;
+    acceptingOrders?: boolean;
+    closed?: boolean;
+    events?: { title?: string }[];
 }
 
-interface WsTradeMessage {
-    type: 'orders_matched';
-    topic: 'activity';
-    payload: {
-        conditionId: string;
-        price: string;
-        size: string;
-        title?: string;
-        outcome?: string;
-        timestamp?: number;
-        eventSlug?: string;
-        slug?: string;
-        [key: string]: any;
+const PAGE_SIZE = 500;
+const PAGE_DELAY_MS = 200;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function num(value: unknown): number | null {
+    if (value === undefined || value === null || value === '') return null;
+    const n = typeof value === 'number' ? value : parseFloat(String(value));
+    return Number.isFinite(n) ? n : null;
+}
+
+function parseJsonArray(value?: string): string[] {
+    if (!value) return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+        return [];
+    }
+}
+
+const inOpenUnitInterval = (n: number | null): n is number => n !== null && n > 0 && n < 1;
+
+/**
+ * Maps a Gamma market onto the shared row shape, or returns null for markets
+ * that cannot be priced as a binary contract.
+ *
+ * YES is the market's first outcome. For Yes/No markets that is "Yes"; for
+ * two-sided markets ("Lakers" vs "Celtics") it is the first name, which is
+ * stored in `outcome` so the matcher knows what YES means.
+ *
+ * Gamma's bestBid/bestAsk are for the first outcome's token. Polymarket's CLOB
+ * matches a NO buy against a YES sell, so NO's ask is 1 - YES bid and NO's bid
+ * is 1 - YES ask.
+ */
+export function toMarketData(market: GammaMarket, now: number): MarketData | null {
+    const outcomes = parseJsonArray(market.outcomes);
+    if (!market.conditionId || outcomes.length !== 2) return null;
+
+    const outcomePrices = parseJsonArray(market.outcomePrices).map(num);
+    const yesBidRaw = num(market.bestBid);
+    const yesAskRaw = num(market.bestAsk);
+    const yesBid = inOpenUnitInterval(yesBidRaw) ? yesBidRaw : null;
+    const yesAsk = inOpenUnitInterval(yesAskRaw) ? yesAskRaw : null;
+
+    const price = outcomePrices[0] ?? num(market.lastTradePrice) ?? (
+        yesBid !== null && yesAsk !== null ? (yesBid + yesAsk) / 2 : null
+    );
+    if (price === null) return null;
+
+    return {
+        ticker: market.conditionId,
+        source: 'Polymarket_Gamma',
+        price,
+        volume: num(market.volumeNum) ?? num(market.volume) ?? 0,
+        timestamp: now,
+        title: market.question,
+        outcome: outcomes[0],
+        event_title: market.events?.[0]?.title || null,
+        yes_bid: yesBid,
+        yes_ask: yesAsk,
+        no_bid: yesAsk !== null ? 1 - yesAsk : null,
+        no_ask: yesBid !== null ? 1 - yesBid : null,
+        close_time: market.endDate || null,
+        rules: market.description || null
     };
 }
 
-type MarketUpdateCallback = (data: PolymarketMarketData) => void;
+export class PolymarketPollingClient {
+    private pollingInterval: NodeJS.Timeout | null = null;
+    private isPollInFlight = false;
 
-export class PolymarketClient {
-    private ws: WebSocket | null = null;
-    private isConnected: boolean = false;
-    private marketIds: Set<string>;
-    private updateCallback: MarketUpdateCallback;
-    private pingInterval: NodeJS.Timeout | null = null;
-    
-    // Statistics tracking
-    private totalTradesReceived: number = 0;
-    private filteredTradesCount: number = 0;
+    constructor(
+        private readonly onBatch: (markets: MarketData[]) => Promise<void>,
+        private readonly intervalMs: number,
+        private readonly maxPages: number
+    ) {}
 
-    constructor(callback: MarketUpdateCallback) {
-        this.marketIds = new Set<string>();
-        this.updateCallback = callback;
-        console.log(chalk.blue.bold('\n[POLYMARKET] 🌙 Polymarket WebSocket Client - Initializing'));
-    }
+    // Sorting by volume makes the page cap keep the most liquid markets. If the
+    // API ever rejects the sort field, fall back to unsorted rather than
+    // stopping ingestion altogether.
+    private sortByVolume = true;
 
-    public connect(): void {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            console.log(chalk.blue('\n[POLYMARKET] 💚 Already connected.'));
-            return;
+    private async fetchPage(offset: number): Promise<GammaMarket[]> {
+        const params = new URLSearchParams({
+            active: 'true',
+            closed: 'false',
+            archived: 'false',
+            limit: String(PAGE_SIZE),
+            offset: String(offset)
+        });
+        if (this.sortByVolume) {
+            params.set('order', 'volumeNum');
+            params.set('ascending', 'false');
         }
 
-        console.log(chalk.blue(`\n[POLYMARKET] 🔌 Connecting to ${POLYMARKET_WEBSOCKET_URL}...`));
-        this.ws = new WebSocket(POLYMARKET_WEBSOCKET_URL);
-
-        this.ws.on('open', () => {
-            this.isConnected = true;
-            console.log(chalk.blue('\n[POLYMARKET] ✅ WebSocket connected!'));
-            this.subscribeToMarkets();
-            this.startPingPong();
-        });
-
-        this.ws.on('message', (data) => {
-            this.onWsMessage(data);
-        });
-
-        this.ws.on('error', (error) => {
-            console.error(chalk.red(`\n[POLYMARKET] ❌ WebSocket Error: ${error.message}`));
-        });
-
-        this.ws.on('close', (code, reason) => {
-            this.isConnected = false;
-            this.stopPingPong();
-            console.log(chalk.yellow(`\n[POLYMARKET] ⚠️ WebSocket connection closed: ${code} - ${reason.toString()}`));
-            console.log(chalk.blue('\n[POLYMARKET] Reconnecting in 5 seconds...'));
-            setTimeout(() => this.connect(), 5000);
-        });
+        const response = await fetch(`${POLYMARKET_GAMMA_API_BASE}/markets?${params}`);
+        if (response.status >= 400 && response.status < 500 && this.sortByVolume) {
+            console.warn(chalk.blue.bold('[POLYMARKET]'), chalk.yellow(`Sorted query rejected (${response.status}); retrying unsorted`));
+            this.sortByVolume = false;
+            return this.fetchPage(offset);
+        }
+        if (!response.ok) {
+            throw new Error(`Polymarket Gamma /markets returned ${response.status}`);
+        }
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
     }
 
-    private startPingPong(): void {
-        if (this.pingInterval) clearInterval(this.pingInterval);
-        this.pingInterval = setInterval(() => {
-            try {
-                this.ws?.send(JSON.stringify({ type: 'ping' }));
-            } catch (e) { /* ignore */ }
-        }, 5000); // Ping every 5 seconds to match template
-    }
+    private async fetchAllMarkets(): Promise<MarketData[]> {
+        const now = Math.floor(Date.now() / 1000);
+        const markets: MarketData[] = [];
+        const seen = new Set<string>();
 
-    private stopPingPong(): void {
-        if (this.pingInterval) clearInterval(this.pingInterval);
-        this.pingInterval = null;
-    }
+        for (let page = 0; page < this.maxPages; page++) {
+            const rows = await this.fetchPage(page * PAGE_SIZE);
 
-    private subscribeToMarkets(): void {
-        if (!this.isConnected) return;
-
-        const subscriptionMsg = {
-            action: "subscribe",
-            subscriptions: [{ topic: "activity", type: "orders_matched" }]
-        };
-        
-        this.ws?.send(JSON.stringify(subscriptionMsg));
-        console.log(chalk.blue('\n[POLYMARKET] 📡 Subscribing to real-time activity feed...'));
-    }
-
-    private onWsMessage(data: WebSocket.Data): void {
-        try {
-            const message = JSON.parse(data.toString());
-
-            if (message.type === 'subscribed') {
-                console.log(chalk.blue('\n[POLYMARKET] ✅ WebSocket subscribed successfully!'));
-                this.isConnected = true;
-                return;
-            }
-
-            if (message.type === 'pong' || !message.topic) {
-                return; // Ignore pongs and messages without topics
-            }
-
-            if (message.topic === 'activity' && message.type === 'orders_matched') {
-                this.totalTradesReceived++;
-                const payload: WsTradeMessage['payload'] = message.payload || {};
-                const marketId = payload.conditionId;
-
-                // Process ALL trades (no filtering by specific markets)
-                if (marketId) {
-                    const price = parseFloat(payload.price || '0');
-                    const size = parseFloat(payload.size || '0');
-                    const usdAmount = price * size;
-
-                    const marketData: PolymarketMarketData = {
-                        marketId: marketId,
-                        price: price,
-                        volume: usdAmount,
-                        title: payload.title || 'Unknown Market',
-                        outcome: payload.outcome || 'Unknown',
-                        timestamp: payload.timestamp || Date.now()
-                    };
-
-                    this.filteredTradesCount++;
-                    
-                    // Print trade information
-                    console.log(chalk.blue(
-                        `\n[POLYMARKET] ✨ TRADE: ${usdAmount.toFixed(0)} - ${marketData.title?.substring(0, 70)}`
-                    ));
-
-                    // Call the update callback to save/process the trade
-                    this.updateCallback(marketData);
+            for (const row of rows) {
+                if (row.closed || row.enableOrderBook === false || row.acceptingOrders === false) continue;
+                const mapped = toMarketData(row, now);
+                // Offset pagination over a live, re-sorting list can repeat rows.
+                if (mapped && !seen.has(mapped.ticker)) {
+                    seen.add(mapped.ticker);
+                    markets.push(mapped);
                 }
             }
-        } catch (e) {
-            // Ignore non-JSON messages
+
+            if (rows.length < PAGE_SIZE) break;
+            await sleep(PAGE_DELAY_MS);
+        }
+
+        return markets;
+    }
+
+    private async poll() {
+        if (this.isPollInFlight) {
+            console.log(chalk.blue.bold('[POLYMARKET]'), chalk.yellow('Previous poll still running, skipping this tick'));
+            return;
+        }
+        this.isPollInFlight = true;
+
+        try {
+            const markets = await this.fetchAllMarkets();
+            console.log(chalk.blue.bold('[POLYMARKET]'), chalk.green(`Fetched ${markets.length} open binary markets`));
+            await this.onBatch(markets);
+        } catch (error) {
+            console.error(chalk.blue.bold('[POLYMARKET]'), chalk.red('Poll failed:'), error);
+        } finally {
+            this.isPollInFlight = false;
         }
     }
 
-    public addMarketSubscription(marketId: string): void {
-        this.marketIds.add(marketId);
+    public startPolling(): void {
+        console.log(chalk.blue.bold('[POLYMARKET]'), chalk.cyan(`Starting polling every ${this.intervalMs / 1000} seconds`));
+        this.poll();
+        this.pollingInterval = setInterval(() => this.poll(), this.intervalMs);
     }
 
-    public startDataFeed(): void {
-        console.log(chalk.blue('\n[POLYMARKET] 🚀 Starting Polymarket data feed for ALL markets...'));
-        this.connect();
-    }
-
-    public getStatus(): { 
-        connected: boolean; 
-        totalTrades: number; 
-        filteredTrades: number; 
-    } {
-        return {
-            connected: this.isConnected,
-            totalTrades: this.totalTradesReceived,
-            filteredTrades: this.filteredTradesCount
-        };
-    }
-
-    public disconnect(): void {
-        this.stopPingPong();
-        this.ws?.close();
-        console.log(chalk.blue('\n[POLYMARKET] 👋 WebSocket disconnected.'));
+    public stopPolling(): void {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+            console.log(chalk.blue.bold('[POLYMARKET]'), chalk.green('Polling stopped'));
+        }
     }
 }

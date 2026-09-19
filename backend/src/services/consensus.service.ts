@@ -2,10 +2,25 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import chalk from 'chalk';
-import { PolymarketDataRecord } from '../types/polymarketDataRecord';
-import { KalshiDataRecord } from '../types/kalshiDataRecord';
+import { CLAUDE_MODEL, GEMINI_MODEL, OPENAI_MODEL } from '../config';
 import { AgentMatch, AgentResponse, ConsensusMatch } from '../types/consensus.types';
+import { buildMatchPrompt, MatchBatch, parseMatchResponse } from './match-prompt';
 
+const MAX_OUTPUT_TOKENS = 4000;
+
+/**
+ * Asks Claude alone. Used directly in single-agent mode and as one voter in
+ * consensus mode.
+ */
+export async function callClaude(anthropic: Anthropic, batch: MatchBatch): Promise<AgentMatch[]> {
+    const message = await anthropic.messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        messages: [{ role: 'user', content: buildMatchPrompt(batch) }]
+    });
+    const text = message.content.map(block => (block.type === 'text' ? block.text : '')).join('');
+    return parseMatchResponse(text, batch);
+}
 
 export class ConsensusService {
     private anthropic: Anthropic;
@@ -26,356 +41,102 @@ export class ConsensusService {
     /**
      * Get consensus matches from all AI agents
      */
-    async getConsensusMatches(
-        polymarketRecords: PolymarketDataRecord[],
-        kalshiRecords: KalshiDataRecord[],
-        quickMatches?: Map<number, number[]>
-    ): Promise<ConsensusMatch[]> {
+    async getConsensusMatches(batch: MatchBatch): Promise<ConsensusMatch[]> {
         console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.cyan('Starting multi-agent consensus matching...'));
 
-        const prompt = this.buildPrompt(polymarketRecords, kalshiRecords, quickMatches);
+        const agents: [string, () => Promise<AgentMatch[]>][] = [
+            ['claude', () => callClaude(this.anthropic, batch)],
+            ['gemini', () => this.callGemini(batch)],
+            ['chatgpt', () => this.callChatGPT(batch)]
+        ];
 
-        // Call all agents in parallel
-        const [claudeResponse, geminiResponse, gptResponse] = await Promise.allSettled([
-            this.callClaude(prompt),
-            this.callGemini(prompt),
-            this.callChatGPT(prompt)
-        ]);
+        const settled = await Promise.allSettled(agents.map(([, call]) => this.timed(call)));
 
-        // Collect successful responses
         const agentResponses: AgentResponse[] = [];
-
-        if (claudeResponse.status === 'fulfilled') {
-            agentResponses.push(claudeResponse.value);
-        } else {
-            console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red('Claude failed:'), claudeResponse.reason);
-        }
-
-        if (geminiResponse.status === 'fulfilled') {
-            agentResponses.push(geminiResponse.value);
-        } else {
-            console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red('Gemini failed:'), geminiResponse.reason);
-        }
-
-        if (gptResponse.status === 'fulfilled') {
-            agentResponses.push(gptResponse.value);
-        } else {
-            console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red('ChatGPT failed:'), gptResponse.reason);
-        }
+        settled.forEach((result, i) => {
+            const agent = agents[i][0];
+            if (result.status === 'fulfilled') {
+                agentResponses.push({ agent, ...result.value });
+                console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.gray(`${agent} responded in ${result.value.responseTime}ms with ${result.value.matches.length} matches`));
+            } else {
+                console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red(`${agent} failed:`), result.reason);
+            }
+        });
 
         if (agentResponses.length === 0) {
-            console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red('All agents failed'));
             throw new Error('All AI agents failed to respond');
         }
 
-        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.green(`Received responses from ${agentResponses.length} agents`));
-
-        // Build consensus
-        const consensusMatches = this.buildConsensus(agentResponses, polymarketRecords, kalshiRecords);
-
-        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.green(`Generated ${consensusMatches.length} consensus matches`));
-
+        const consensusMatches = this.buildConsensus(agentResponses);
+        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.green(`Generated ${consensusMatches.length} consensus matches from ${agentResponses.length} agents`));
         return consensusMatches;
     }
 
-    /**
-     * Call Claude API
-     */
-    private async callClaude(prompt: string): Promise<AgentResponse> {
-        const startTime = Date.now();
-        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.blue('Calling Claude...'));
+    private async timed(call: () => Promise<AgentMatch[]>): Promise<{ matches: AgentMatch[]; responseTime: number }> {
+        const start = Date.now();
+        const matches = await call();
+        return { matches, responseTime: Date.now() - start };
+    }
 
-        try {
-            const message = await this.anthropic.messages.create({
-                model: 'claude-sonnet-4-20250514',
-                max_tokens: 4000,
-                messages: [{ role: 'user', content: prompt }]
-            });
+    private async callGemini(batch: MatchBatch): Promise<AgentMatch[]> {
+        const model = this.gemini.getGenerativeModel({
+            model: GEMINI_MODEL,
+            generationConfig: { responseMimeType: 'application/json', maxOutputTokens: MAX_OUTPUT_TOKENS }
+        });
+        const result = await model.generateContent(buildMatchPrompt(batch));
+        return parseMatchResponse(result.response.text(), batch);
+    }
 
-            const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
-            const matches = this.parseResponse(responseText);
-            const responseTime = Date.now() - startTime;
-
-            console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.blue(`Claude responded in ${responseTime}ms with ${matches.length} matches`));
-
-            return {
-                agent: 'claude',
-                matches,
-                responseTime
-            };
-        } catch (error) {
-            console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red('Claude error:'), error);
-            throw error;
-        }
+    private async callChatGPT(batch: MatchBatch): Promise<AgentMatch[]> {
+        const completion = await this.openai.chat.completions.create({
+            model: OPENAI_MODEL,
+            messages: [{ role: 'user', content: buildMatchPrompt(batch) }],
+            response_format: { type: 'json_object' },
+            max_tokens: MAX_OUTPUT_TOKENS
+        });
+        return parseMatchResponse(completion.choices[0]?.message?.content || '', batch);
     }
 
     /**
-     * Call Gemini API
+     * A pair is accepted when enough agents name it WITH THE SAME DIRECTION.
+     * Agents that agree two markets match but disagree on which sides line up
+     * are not in agreement: one of them would put both legs on the same side.
      */
-    private async callGemini(prompt: string): Promise<AgentResponse> {
-        const startTime = Date.now();
-        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.yellow('Calling Gemini...'));
+    private buildConsensus(agentResponses: AgentResponse[]): ConsensusMatch[] {
+        const votesByKey = new Map<string, Map<string, AgentMatch>>();
 
-        try {
-            const model = this.gemini.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-            const result = await model.generateContent(prompt);
-            const responseText = result.response.text();
-            const matches = this.parseResponse(responseText);
-            const responseTime = Date.now() - startTime;
-
-            console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.yellow(`Gemini responded in ${responseTime}ms with ${matches.length} matches`));
-
-            return {
-                agent: 'gemini',
-                matches,
-                responseTime
-            };
-        } catch (error) {
-            console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red('Gemini error:'), error);
-            throw error;
-        }
-    }
-
-    /**
-     * Call ChatGPT API
-     */
-    private async callChatGPT(prompt: string): Promise<AgentResponse> {
-        const startTime = Date.now();
-        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.green('Calling ChatGPT...'));
-
-        try {
-            const completion = await this.openai.chat.completions.create({
-                model: 'gpt-4o',
-                messages: [{ role: 'user', content: prompt }],
-                max_tokens: 4000
-            });
-
-            const responseText = completion.choices[0]?.message?.content || '';
-            const matches = this.parseResponse(responseText);
-            const responseTime = Date.now() - startTime;
-
-            console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.green(`ChatGPT responded in ${responseTime}ms with ${matches.length} matches`));
-
-            return {
-                agent: 'chatgpt',
-                matches,
-                responseTime
-            };
-        } catch (error) {
-            console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red('ChatGPT error:'), error);
-            throw error;
-        }
-    }
-
-    /**
-     * Build prompt for AI agents
-     */
-    private buildPrompt(
-        polymarketRecords: PolymarketDataRecord[],
-        kalshiRecords: KalshiDataRecord[],
-        quickMatches?: Map<number, number[]>
-    ): string {
-        // Titles carry far more signal than tickers, so send both when available.
-        const polymarketData = polymarketRecords.map((r, i) =>
-            `${i}. Title: ${r.title || r.ticker}\n   Ticker: ${r.ticker}\n   Outcome: ${r.outcome || 'n/a'}\n   Price: $${r.price}, Volume: ${r.volume}\n   Timestamp: ${r.timestamp}`
-        ).join('\n\n');
-
-        const kalshiData = kalshiRecords.map((r, i) =>
-            `${i}. Title: ${r.title || r.ticker}\n   Ticker: ${r.ticker}\n   Subtitle: ${r.subtitle || 'n/a'}\n   Price: $${r.price}, Volume: ${r.volume}\n   Timestamp: ${r.timestamp}`
-        ).join('\n\n');
-
-        let hints = '';
-        if (quickMatches && quickMatches.size > 0) {
-            hints = '\n\nPre-filtered potential matches (high semantic vector similarity):';
-            quickMatches.forEach((kalshiIndices, polyIndex) => {
-                hints += `\n- Polymarket ${polyIndex} may match Kalshi: ${kalshiIndices.join(', ')}`;
-            });
-        }
-
-        return `You are a market matching engine. Your task is to find similar or identical prediction markets between Polymarket and Kalshi platforms.
-
-Polymarket Markets:
-${polymarketData}
-
-Kalshi Markets:
-${kalshiData}
-${hints}
-
-Please analyze these markets and return matching pairs in the following JSON format:
-{
-  "matches": [
-    {
-      "polymarketIndex": 0,
-      "kalshiIndex": 0,
-      "similarity": "exact|high|medium|low",
-      "confidence": 0.95,
-      "reasoning": "Brief explanation of why these markets match"
-    }
-  ]
-}
-
-Matching criteria:
-- "exact": Same event, same outcome (confidence >= 0.9)
-- "high": Same event, slightly different outcome or time frame (confidence >= 0.75)
-- "medium": Related events, similar outcomes (confidence >= 0.6)
-- "low": Loosely related events (confidence >= 0.5)
-
-Consider:
-1. Similar events even with different wording
-2. Time frames and outcomes
-3. Pre-filtered hints if provided
-
-Only include matches with confidence >= 0.6. Return valid JSON only, no markdown formatting.`;
-    }
-
-    /**
-     * Parse AI agent response
-     */
-    private parseResponse(responseText: string): AgentMatch[] {
-        try {
-            const jsonText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-            const parsed = JSON.parse(jsonText);
-
-            if (!parsed.matches || !Array.isArray(parsed.matches)) {
-                return [];
-            }
-
-            return parsed.matches
-                .filter((m: any) => 
-                    typeof m.polymarketIndex === 'number' &&
-                    typeof m.kalshiIndex === 'number' &&
-                    typeof m.confidence === 'number' &&
-                    m.confidence >= 0.6
-                )
-                .map((m: any) => ({
-                    polymarketIndex: m.polymarketIndex,
-                    kalshiIndex: m.kalshiIndex,
-                    similarity: m.similarity || 'low',
-                    confidence: m.confidence,
-                    reasoning: m.reasoning || 'No reasoning provided'
-                }));
-        } catch (error) {
-            console.error(chalk.magenta.bold('[CONSENSUS]'), chalk.red('Error parsing response:'), error);
-            return [];
-        }
-    }
-
-    /**
-     * Build consensus from multiple agent responses
-     */
-    private buildConsensus(
-        agentResponses: AgentResponse[],
-        polymarketRecords: PolymarketDataRecord[],
-        kalshiRecords: KalshiDataRecord[]
-    ): ConsensusMatch[] {
-        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.cyan('Building consensus from agent responses...'));
-
-        // Create a map of all potential matches
-        const matchMap = new Map<string, {
-            votes: Map<string, AgentMatch>;
-            agentVotes: string[];
-        }>();
-
-        // Collect all matches from all agents
         for (const response of agentResponses) {
             for (const match of response.matches) {
-                const key = `${match.polymarketIndex}:${match.kalshiIndex}`;
-                
-                if (!matchMap.has(key)) {
-                    matchMap.set(key, {
-                        votes: new Map(),
-                        agentVotes: []
-                    });
-                }
-
-                const matchData = matchMap.get(key)!;
-                // One vote per agent: an agent repeating a pair in its response
-                // must not inflate the consensus score above 1.0.
-                if (!matchData.votes.has(response.agent)) {
-                    matchData.agentVotes.push(response.agent);
-                }
-                matchData.votes.set(response.agent, match);
+                const key = `${match.polymarketIndex}:${match.kalshiIndex}:${match.direction}`;
+                if (!votesByKey.has(key)) votesByKey.set(key, new Map());
+                // One vote per agent, even if it repeats a pair.
+                votesByKey.get(key)!.set(response.agent, match);
             }
         }
 
-        // Calculate consensus matches
-        const consensusMatches: ConsensusMatch[] = [];
         const totalAgents = agentResponses.length;
         const requiredVotes = Math.ceil(totalAgents * this.CONSENSUS_THRESHOLD);
+        const consensusMatches: ConsensusMatch[] = [];
 
-        matchMap.forEach((matchData) => {
-            const voteCount = matchData.agentVotes.length;
-            const consensusScore = voteCount / totalAgents;
+        votesByKey.forEach((votes) => {
+            if (votes.size < requiredVotes) return;
 
-            // Only include matches that meet the consensus threshold
-            if (voteCount >= requiredVotes) {
-                const votes = Array.from(matchData.votes.values());
-                const avgConfidence = votes.reduce((sum, v) => sum + v.confidence, 0) / votes.length;
+            const all = Array.from(votes.values());
+            const best = all.reduce((a, b) => (b.confidence > a.confidence ? b : a));
+            // Similarity is only as strong as the most cautious voter's.
+            const similarity = all.every(v => v.similarity === 'exact') ? 'exact' : 'high';
 
-                // Use the match data from the agent with highest confidence
-                const bestMatch = votes.reduce((best, current) => 
-                    current.confidence > best.confidence ? current : best
-                );
-
-                // Validate indices
-                if (
-                    bestMatch.polymarketIndex >= 0 &&
-                    bestMatch.polymarketIndex < polymarketRecords.length &&
-                    bestMatch.kalshiIndex >= 0 &&
-                    bestMatch.kalshiIndex < kalshiRecords.length
-                ) {
-                    consensusMatches.push({
-                        ...bestMatch,
-                        agentVotes: matchData.agentVotes,
-                        consensusScore,
-                        averageConfidence: avgConfidence
-                    });
-                }
-            }
+            consensusMatches.push({
+                ...best,
+                similarity,
+                agentVotes: Array.from(votes.keys()),
+                consensusScore: votes.size / totalAgents,
+                averageConfidence: all.reduce((sum, v) => sum + v.confidence, 0) / all.length
+            });
         });
 
-        // Sort by consensus score, then by average confidence
-        consensusMatches.sort((a, b) => {
-            if (a.consensusScore !== b.consensusScore) {
-                return b.consensusScore - a.consensusScore;
-            }
-            return b.averageConfidence - a.averageConfidence;
-        });
-
-        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.green(`Built ${consensusMatches.length} consensus matches`));
-        console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.gray(`  - Required votes: ${requiredVotes}/${totalAgents}`));
-        
-        return consensusMatches;
-    }
-
-    /**
-     * Get detailed consensus statistics
-     */
-    getConsensusStatistics(consensusMatches: ConsensusMatch[]): {
-        totalMatches: number;
-        unanimousMatches: number;
-        majorityMatches: number;
-        averageConsensusScore: number;
-        averageConfidence: number;
-    } {
-        const totalMatches = consensusMatches.length;
-        const unanimousMatches = consensusMatches.filter(m => m.consensusScore === 1).length;
-        const majorityMatches = consensusMatches.filter(m => m.consensusScore >= this.CONSENSUS_THRESHOLD && m.consensusScore < 1).length;
-        
-        const avgConsensusScore = totalMatches > 0
-            ? consensusMatches.reduce((sum, m) => sum + m.consensusScore, 0) / totalMatches
-            : 0;
-        
-        const avgConfidence = totalMatches > 0
-            ? consensusMatches.reduce((sum, m) => sum + m.averageConfidence, 0) / totalMatches
-            : 0;
-
-        return {
-            totalMatches,
-            unanimousMatches,
-            majorityMatches,
-            averageConsensusScore: Number(avgConsensusScore.toFixed(3)),
-            averageConfidence: Number(avgConfidence.toFixed(3))
-        };
+        return consensusMatches.sort((a, b) =>
+            b.consensusScore - a.consensusScore || b.averageConfidence - a.averageConfidence
+        );
     }
 }

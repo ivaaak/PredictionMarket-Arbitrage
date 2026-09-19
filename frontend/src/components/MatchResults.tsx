@@ -136,7 +136,7 @@ export function MatchResults({ matches }: MatchResultsProps) {
                             <th>ID</th>
                             <th>Market Info</th>
                             <th>Pricing Snapshots</th>
-                            <th className={styles.numeric}>Spread</th>
+                            <th className={styles.numeric}>{showDbMatches ? 'Spread' : 'Net Edge'}</th>
                             <th className={styles.numeric}>Combined Vol</th>
                             <th>Confidence</th>
                             <th>Status / Action</th>
@@ -184,7 +184,7 @@ export function MatchResults({ matches }: MatchResultsProps) {
                             ))
                         ) : (
                             matches.map((match, idx) => {
-                                const diff = Math.abs(match.polymarketRecord.price - match.kalshiRecord.price);
+                                const arb = match.arbitrage;
                                 return (
                                     <tr key={idx} className={styles.opportunityRow}>
                                         <td className={styles.idCell}><span className={styles.matchIdBadge}>LIVE</span></td>
@@ -192,6 +192,7 @@ export function MatchResults({ matches }: MatchResultsProps) {
                                             <div className={styles.marketTitle}>{match.polymarketRecord.title}</div>
                                             <div className={styles.pairItem}>
                                                 <code>{match.polymarketRecord.ticker}</code>
+                                                {match.direction === 'inverted' && ' · inverted (PM YES = KL NO)'}
                                             </div>
                                         </td>
                                         <td className={styles.volumeCell}>
@@ -204,8 +205,11 @@ export function MatchResults({ matches }: MatchResultsProps) {
                                                 <span className={styles.volumeValue}>${match.kalshiRecord.price.toFixed(2)}</span>
                                             </div>
                                         </td>
-                                        <td className={`${styles.numeric} ${styles.roiPositive}`}>
-                                            ${diff.toFixed(3)}
+                                        <td
+                                            className={`${styles.numeric} ${arb && arb.netEdge > 0 ? styles.roiPositive : ''}`}
+                                            title={arb ? arb.legs.map(l => `Buy ${l.side} on ${l.platform} @ $${l.price.toFixed(2)}`).join(' + ') + ` · fees $${arb.fees.toFixed(3)}` : 'A leg has no ask; cannot price the hedge'}
+                                        >
+                                            {arb ? `$${arb.netEdge.toFixed(3)}` : '—'}
                                         </td>
                                         <td className={styles.numeric}>
                                             {(match.polymarketRecord.volume + match.kalshiRecord.volume).toLocaleString()}

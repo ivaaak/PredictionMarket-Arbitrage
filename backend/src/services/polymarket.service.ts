@@ -10,7 +10,7 @@ export class PolymarketService {
         try {
             const result = await client.query(
                 `SELECT * FROM polymarket_data 
-                 ORDER BY created_at DESC 
+                 ORDER BY updated_at DESC 
                  LIMIT $1 OFFSET $2`,
                 [limit, offset]
             );
@@ -45,7 +45,7 @@ export class PolymarketService {
             const result = await client.query(
                 `SELECT * FROM polymarket_data 
                  WHERE ticker = $1 
-                 ORDER BY created_at DESC 
+                 ORDER BY updated_at DESC 
                  LIMIT $2`,
                 [ticker, limit]
             );
@@ -56,23 +56,27 @@ export class PolymarketService {
     }
 
     /**
-     * Get latest Polymarket data for each unique ticker
+     * Get the current row for each ticker (`ticker` is unique, so this is one row per market)
      */
     static async getLatestByTicker(): Promise<PolymarketDataRecord[]> {
-        const client = await pool.connect();
-        try {
-            const result = await client.query(`
-                SELECT p1.* FROM polymarket_data p1
-                INNER JOIN (
-                    SELECT ticker, MAX(created_at) as max_created
-                    FROM polymarket_data
-                    GROUP BY ticker
-                ) p2 ON p1.ticker = p2.ticker AND p1.created_at = p2.max_created
-            `);
-            return result.rows as PolymarketDataRecord[];
-        } finally {
-            client.release();
-        }
+        const result = await pool.query(`SELECT * FROM polymarket_data ORDER BY volume DESC`);
+        return result.rows as PolymarketDataRecord[];
+    }
+
+    /**
+     * Open markets to feed the matcher, most traded first. Markets whose close
+     * time has passed are excluded because they can no longer be traded.
+     */
+    static async getMatchCandidates(limit: number, search?: string): Promise<PolymarketDataRecord[]> {
+        const result = await pool.query(
+            `SELECT * FROM polymarket_data
+             WHERE (close_time IS NULL OR close_time > NOW())
+               AND ($2::text IS NULL OR title ILIKE $2 OR event_title ILIKE $2)
+             ORDER BY volume DESC
+             LIMIT $1`,
+            [limit, search ? `%${search}%` : null]
+        );
+        return result.rows as PolymarketDataRecord[];
     }
 
     /**
@@ -84,7 +88,7 @@ export class PolymarketService {
             const result = await client.query(
                 `SELECT * FROM polymarket_data 
                  WHERE timestamp BETWEEN $1 AND $2 
-                 ORDER BY created_at DESC`,
+                 ORDER BY updated_at DESC`,
                 [startTimestamp, endTimestamp]
             );
             return result.rows as PolymarketDataRecord[];

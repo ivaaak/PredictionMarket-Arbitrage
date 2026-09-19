@@ -6,26 +6,28 @@ import { MatchFilters } from '../types/matchFilters';
 
 const router = Router();
 
+// Accepts either a JSON body or query params, so every value may arrive as a string.
+function filtersFrom(source: Record<string, unknown>): MatchFilters {
+    const int = (v: unknown) => (v === undefined || v === '' ? undefined : parseInt(String(v), 10) || undefined);
+    const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : undefined);
+    return {
+        startTimestamp: int(source.startTimestamp),
+        endTimestamp: int(source.endTimestamp),
+        polymarketTicker: str(source.polymarketTicker),
+        kalshiTicker: str(source.kalshiTicker),
+        search: str(source.search),
+        limit: int(source.limit)
+    };
+}
+
 // Match markets with optional filters
 router.post('/match', async (req, res) => {
     try {
-        const filters: MatchFilters = {
-            startTimestamp: req.body.startTimestamp,
-            endTimestamp: req.body.endTimestamp,
-            polymarketTicker: req.body.polymarketTicker,
-            kalshiTicker: req.body.kalshiTicker,
-            limit: req.body.limit
-        };
-
+        const filters = filtersFrom(req.body);
         console.log(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.cyan('Received match request with filters:'), filters);
 
         const result = await matchingEngine.matchMarkets(filters);
-
-        res.json({
-            success: true,
-            ...result,
-            cacheHit: false // Could be enhanced to track this
-        });
+        res.json({ success: true, ...result });
     } catch (error) {
         console.error(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Error in match endpoint:'), error);
         res.status(500).json({
@@ -35,42 +37,23 @@ router.post('/match', async (req, res) => {
     }
 });
 
-// Find arbitrage opportunities
+// Find arbitrage opportunities.
+// `minNetEdge` is the minimum profit, in dollars per $1 contract pair after
+// fees, of buying YES on one venue and the equivalent NO on the other.
 router.post('/arbitrage', async (req, res) => {
     try {
-        const filters: MatchFilters = {
-            startTimestamp: req.body.startTimestamp,
-            endTimestamp: req.body.endTimestamp,
-            polymarketTicker: req.body.polymarketTicker,
-            kalshiTicker: req.body.kalshiTicker,
-            limit: req.body.limit
-        };
+        const filters = filtersFrom(req.body);
+        const minNetEdge = Number(req.body.minNetEdge ?? 0);
 
-        const minPriceDiff = req.body.minPriceDifference || 0.05;
+        console.log(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.cyan('Finding arbitrage opportunities with min net edge:'), chalk.white(minNetEdge));
 
-        console.log(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.cyan('Finding arbitrage opportunities with min price diff:'), chalk.white(minPriceDiff));
-
-        const opportunities = await matchingEngine.findArbitrageOpportunities(filters, minPriceDiff);
-
-        // Calculate potential profit for each opportunity
-        const enrichedOpportunities = opportunities.map(opp => {
-            const priceDiff = Math.abs(opp.polymarketRecord.price - opp.kalshiRecord.price);
-            const avgVolume = (opp.polymarketRecord.volume + opp.kalshiRecord.volume) / 2;
-
-            return {
-                ...opp,
-                priceDifference: priceDiff,
-                potentialProfitPercentage: (priceDiff / Math.min(opp.polymarketRecord.price, opp.kalshiRecord.price)) * 100,
-                averageVolume: avgVolume,
-                liquidityScore: Math.min(opp.polymarketRecord.volume, opp.kalshiRecord.volume)
-            };
-        });
+        const opportunities = await matchingEngine.findArbitrageOpportunities(filters, minNetEdge);
 
         res.json({
             success: true,
-            opportunities: enrichedOpportunities,
-            count: enrichedOpportunities.length,
-            minPriceDifference: minPriceDiff
+            opportunities,
+            count: opportunities.length,
+            minNetEdge
         });
     } catch (error) {
         console.error(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Error in arbitrage endpoint:'), error);
@@ -84,14 +67,7 @@ router.post('/arbitrage', async (req, res) => {
 // Match markets with GET (using query params)
 router.get('/match', async (req, res) => {
     try {
-        const filters: MatchFilters = {
-            startTimestamp: req.query.startTimestamp ? parseInt(req.query.startTimestamp as string) : undefined,
-            endTimestamp: req.query.endTimestamp ? parseInt(req.query.endTimestamp as string) : undefined,
-            polymarketTicker: req.query.polymarketTicker as string,
-            kalshiTicker: req.query.kalshiTicker as string,
-            limit: req.query.limit ? parseInt(req.query.limit as string) : undefined
-        };
-
+        const filters = filtersFrom(req.query);
         console.log(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.cyan('Received GET match request with filters:'), filters);
 
         const result = await matchingEngine.matchMarkets(filters);

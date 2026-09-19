@@ -3,6 +3,12 @@ import chalk from 'chalk';
 import { PolymarketIngestor } from '../api-clients/polymarket.ingestor';
 import { KalshiPollingIngestor } from '../api-clients/kalshi-polling.ingestor';
 import { PostgresClient } from '../database/postgres.client';
+import {
+    KALSHI_MAX_PAGES,
+    KALSHI_POLLING_INTERVAL_MS,
+    POLYMARKET_MAX_PAGES,
+    POLYMARKET_POLLING_INTERVAL_MS
+} from '../config';
 
 let polymarketIngestor: PolymarketIngestor;
 let kalshiIngestor: KalshiPollingIngestor;
@@ -18,19 +24,24 @@ async function startIngestorWorker() {
         // 1. Initialize Database (ensures connection is ready for the worker thread)
         await PostgresClient.initialize();
 
-        console.log(chalk.cyan.bold('[WORKER]'), chalk.yellow('📊 Starting ingestors to track ALL markets from both exchanges.'));
+        console.log(chalk.cyan.bold('[WORKER]'), chalk.yellow('📊 Starting ingestors to track open markets on both exchanges.'));
 
         // 2. Start Kalshi Polling Ingestor
-        const pollingInterval = workerData?.kalshiPollingInterval || 5000;
-        kalshiIngestor = new KalshiPollingIngestor(pollingInterval);
+        kalshiIngestor = new KalshiPollingIngestor(
+            workerData?.kalshiPollingInterval || KALSHI_POLLING_INTERVAL_MS,
+            KALSHI_MAX_PAGES
+        );
         kalshiIngestor.start();
-        
+
         // 3. Start Polymarket Ingestor
-        polymarketIngestor = new PolymarketIngestor();
+        polymarketIngestor = new PolymarketIngestor(
+            workerData?.polymarketPollingInterval || POLYMARKET_POLLING_INTERVAL_MS,
+            POLYMARKET_MAX_PAGES
+        );
         polymarketIngestor.start();
 
-        console.log(chalk.cyan.bold('[WORKER]'), chalk.green('✅ All ingestors started successfully. Streaming all market data...'));
-        
+        console.log(chalk.cyan.bold('[WORKER]'), chalk.green('✅ All ingestors started successfully.'));
+
         // Notify the main thread that the worker is ready
         parentPort?.postMessage({ status: 'ready', message: 'Ingestors started.' });
 
@@ -38,7 +49,7 @@ async function startIngestorWorker() {
         console.error(chalk.cyan.bold('[WORKER]'), chalk.red('🚨 Fatal Error starting Data Ingestor Worker:'), error);
         // Notify the main thread of the error and terminate the worker
         parentPort?.postMessage({ status: 'error', message: 'Failed to start ingestors.', error: error instanceof Error ? error.message : 'Unknown error' });
-        process.exit(1); 
+        process.exit(1);
     }
 }
 
@@ -47,15 +58,15 @@ async function startIngestorWorker() {
  */
 function stopIngestorWorker() {
     console.log(chalk.cyan.bold('[WORKER]'), chalk.yellow('Received stop signal. Shutting down ingestors...'));
-    
+
     if (polymarketIngestor) {
         polymarketIngestor.stop();
     }
-    
+
     if (kalshiIngestor) {
         kalshiIngestor.stop();
     }
-    
+
     console.log(chalk.cyan.bold('[WORKER]'), chalk.green('All ingestors stopped. Exiting worker thread.'));
     process.exit(0);
 }

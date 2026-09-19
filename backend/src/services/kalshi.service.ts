@@ -10,7 +10,7 @@ export class KalshiService {
         try {
             const result = await client.query(
                 `SELECT * FROM kalshi_data 
-                 ORDER BY created_at DESC 
+                 ORDER BY updated_at DESC 
                  LIMIT $1 OFFSET $2`,
                 [limit, offset]
             );
@@ -45,7 +45,7 @@ export class KalshiService {
             const result = await client.query(
                 `SELECT * FROM kalshi_data 
                  WHERE ticker = $1 
-                 ORDER BY created_at DESC 
+                 ORDER BY updated_at DESC 
                  LIMIT $2`,
                 [ticker, limit]
             );
@@ -56,23 +56,27 @@ export class KalshiService {
     }
 
     /**
-     * Get latest Kalshi data for each unique ticker
+     * Get the current row for each ticker (`ticker` is unique, so this is one row per market)
      */
     static async getLatestByTicker(): Promise<KalshiDataRecord[]> {
-        const client = await pool.connect();
-        try {
-            const result = await client.query(`
-                SELECT k1.* FROM kalshi_data k1
-                INNER JOIN (
-                    SELECT ticker, MAX(created_at) as max_created
-                    FROM kalshi_data
-                    GROUP BY ticker
-                ) k2 ON k1.ticker = k2.ticker AND k1.created_at = k2.max_created
-            `);
-            return result.rows as KalshiDataRecord[];
-        } finally {
-            client.release();
-        }
+        const result = await pool.query(`SELECT * FROM kalshi_data ORDER BY volume DESC`);
+        return result.rows as KalshiDataRecord[];
+    }
+
+    /**
+     * Open markets to feed the matcher, most traded first. Markets whose close
+     * time has passed are excluded because they can no longer be traded.
+     */
+    static async getMatchCandidates(limit: number, search?: string): Promise<KalshiDataRecord[]> {
+        const result = await pool.query(
+            `SELECT * FROM kalshi_data
+             WHERE (close_time IS NULL OR close_time > NOW())
+               AND ($2::text IS NULL OR title ILIKE $2 OR event_title ILIKE $2)
+             ORDER BY volume DESC
+             LIMIT $1`,
+            [limit, search ? `%${search}%` : null]
+        );
+        return result.rows as KalshiDataRecord[];
     }
 
     /**
@@ -84,7 +88,7 @@ export class KalshiService {
             const result = await client.query(
                 `SELECT * FROM kalshi_data 
                  WHERE timestamp BETWEEN $1 AND $2 
-                 ORDER BY created_at DESC`,
+                 ORDER BY updated_at DESC`,
                 [startTimestamp, endTimestamp]
             );
             return result.rows as KalshiDataRecord[];

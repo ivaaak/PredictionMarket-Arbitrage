@@ -8,8 +8,8 @@ A real-time prediction market arbitrage detection system that monitors Polymarke
 
 This system continuously ingests market data from two major prediction market platforms:
 
-* **Polymarket** (via WebSocket)
-* **Kalshi** (via REST API polling)
+* **Polymarket** (Gamma REST API polling: full open-market catalogue with best bid/ask)
+* **Kalshi** (REST API polling: all open events and their markets, with best bid/ask)
 
 It stores the data in a **PostgreSQL database**, uses a local **Vector Matching Service** for efficient pre-filtering, and employs a **Multi-Agent LLM Consensus** (Claude, Gemini, OpenAI) to confirm high-confidence market matches and identify arbitrage opportunities.
 
@@ -60,7 +60,7 @@ The architecture uses **PostgreSQL** for persistence and a **Vector Matching** l
 │  ┌────────────┐  │                              │
 │  │ Polymarket │  │                              │
 │  │  Ingestor  │  │                    ┌─────────▼──────────┐
-│  │ (WebSocket)│  │                    │   Multi-Agent-LLM  │
+│  │ (Polling)  │  │                    │   Multi-Agent-LLM  │
 │  └─────┬──────┘  │                    │  Consensus Service │
 │        │         │                    │OpenAI Claude Gemini│
 │  ┌─────▼──────┐  │                    └────────────────────┘
@@ -79,8 +79,8 @@ This flow separates the local, fast vector processing from the high-confidence L
 ```mermaid
 graph TD
     subgraph External_Exchanges
-        E[Polymarket WebSocket]
-        F[Kalshi Polling/WS]
+        E[Polymarket Gamma Polling]
+        F[Kalshi Polling]
     end
 
     subgraph Node_Application
@@ -96,7 +96,7 @@ graph TD
     subgraph Components
         G(Vector Matching: MiniLM-L6-v2)
         H(LLM Consensus: Claude/Gemini/OpenAI)
-        I[MatchCache: In-Memory TTL]
+        I[(match_verdicts: stored LLM decisions)]
     end
 
     D[(PostgreSQL Database)]
@@ -108,15 +108,14 @@ graph TD
     F --> C
     C -- Writes --> D
     
-    B -- 1. Check Cache --> I
-    I -- Cache Miss --> B
-    B -- 2. Fetch Records --> D
-    D -- Market Data --> B
-    B -- 3. Vector Pre-Filter --> G
-    G -- Matches --> B
-    B -- 4. LLM Verification --> H
-    H -- Final Results --> B
-    B -- 5. Cache Results --> I
+    B -- 1. Fetch Open Markets --> D
+    D -- Market Data + Order Books --> B
+    B -- 2. Top-k Vector Candidates --> G
+    G -- Candidate Pairs --> B
+    B -- 3. Look Up Verdicts --> I
+    B -- 4. Judge Unseen Pairs --> H
+    H -- Verdicts --> B
+    B -- 5. Store Verdicts --> I
 
 ```
 
@@ -125,8 +124,8 @@ graph TD
 
 ```
 ┌─────────────┐         ┌──────────────┐
-│ Polymarket  │───────> │  WebSocket   │
-│   (WS API)  │         │   Ingestor   │
+│ Polymarket  │───────> │   Polling    │
+│ (Gamma API) │         │   Ingestor   │
 └─────────────┘         └──────┬───────┘
                                │
                                │ Real-time market data
@@ -177,7 +176,7 @@ graph TD
 ### 3. Matching Engine
 
 * **Vector Embedding:** Converts market titles/tickers to vectors using **MiniLM-L6-v2**.
-* **Vector Pre-filtering:** Calculates **Cosine Similarity** (threshold) to filter matches.
+* **Vector Pre-filtering:** Keeps each Polymarket market's top-3 most similar Kalshi markets as candidate pairs.
 * **Multi-Agent Consensus:** Parallel calls to **Claude, Gemini, and OpenAI** for
   final semantic scoring. Enabled only when `GEMINI_API_KEY` and `OPENAI_API_KEY`
   are both set; otherwise the engine runs single-agent (Claude only).
@@ -190,7 +189,7 @@ graph TD
 * **Runtime:** Node.js, TypeScript, Worker Threads.
 * **Database:** PostgreSQL with `pg` client.
 * **AI/ML:** MiniLM-L6-v2 (Local Embeddings), Claude, Gemini, OpenAI.
-* **APIs:** Polymarket (WebSocket), Kalshi (REST Polling).
+* **APIs:** Polymarket Gamma (REST Polling), Kalshi (REST Polling).
 
 
 ## 🚀 Getting Started
@@ -261,29 +260,52 @@ npm run build     # compile backend to dist/ and build the UI
 
 ## 🧠 Matching Algorithm
 
-1. **Embedding** – Every market title (falling back to the ticker) is embedded
-   once per side with MiniLM-L6-v2.
-2. **Pre-filtering** – Cosine similarity is computed for every cross-platform
-   pair; only pairs scoring `>= 0.75` survive, and the surviving pairs are
-   passed on as hints.
-3. **Verification** – Survivors are batched (50 Polymarket records per batch)
-   and sent to the LLM layer. With all three keys configured this is the
-   multi-agent consensus path; with only `ANTHROPIC_API_KEY` it is Claude alone.
-   Consensus failures fall back to the single-agent path.
-4. **Scoring** – Matches below `0.6` confidence are dropped, duplicates are
-   removed, results are sorted by confidence and cached for one hour.
+Whether two markets are the same bet is slow and expensive to decide (LLMs) but
+never changes; whether there is an edge right now is cheap to compute but
+changes constantly. The pipeline keeps the two apart:
+
+1. **Load** – The highest-volume open markets on each side (`limit`, default
+   300 per platform, optionally narrowed with `search`) are read fresh from the
+   database on every request.
+2. **Candidates** – Titles are embedded with MiniLM-L6-v2 and each Polymarket
+   market keeps its 3 most similar Kalshi markets (similarity `>= 0.5`).
+3. **Verdict lookup** – Candidate pairs already judged are answered from the
+   `match_verdicts` table, including pairs previously judged *not* to match.
+4. **Verification** – Only never-seen pairs go to the LLM layer, in batches of
+   15 Polymarket markets with their candidates. The prompt includes close dates,
+   resolution rules and what YES means on each side, and asks for:
+   * `similarity`: `exact` or `high`. Merely related markets are rejected,
+     because they can resolve differently.
+   * `direction`: `same` (YES = YES) or `inverted` (Polymarket YES = Kalshi NO).
+   With all three keys configured, a pair needs 60% of agents agreeing on both
+   the match *and* its direction. Every answer is stored; a failed LLM call
+   stores nothing, so its pairs are retried next run.
+5. **Pricing** – Each match is priced from the current order books (below).
+
+`POST /api/matching/cache/clear` forgets all stored verdicts.
 
 
 ## 💰 Arbitrage Detection
 
-`POST /api/matching/arbitrage` runs the full matching pipeline and then keeps
-only the pairs whose absolute price difference is at least
-`minPriceDifference` (default `0.05`), sorted widest spread first. Each
-opportunity is returned with its price difference, potential profit percentage,
-average volume, and a liquidity score (the smaller of the two volumes).
+For equivalent markets, buying YES on one venue and the opposite side on the
+other pays exactly $1 whichever way the event resolves. The trade is an
+arbitrage when the two **asks** plus fees cost less than $1:
 
-Confidence filtering happens earlier in the pipeline: matches below `0.6`
-confidence are discarded before they can become opportunities.
+```
+netEdge = 1 - (ask_leg1 + ask_leg2) - fees          per $1 contract pair
+fees    = rate * P * (1 - P) per leg                (Kalshi rate 0.07; Polymarket 0 by default)
+```
+
+Both possible hedges are priced (and flipped for `inverted` pairs) and the
+better one is returned as `arbitrage` on every match, with its legs, cost, fees,
+gross/net edge and ROI; it is `null` when a leg has no ask.
+`POST /api/matching/arbitrage` returns matches with `netEdge >= minNetEdge`
+(default `0`), best first.
+
+The displayed `price` (book mid or last trade) is never used for this: two
+markets both showing 0.50 can be an arbitrage, and two showing 0.40 and 0.60 may
+not be. The quote is top-of-book only, so executable size is limited by the
+depth behind those asks.
 
 ## 📁 Repository Layout
 

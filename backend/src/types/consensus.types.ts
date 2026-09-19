@@ -1,9 +1,12 @@
+import { MatchDirection } from './marketMatch';
+
 export type SimilarityLevel = 'exact' | 'high' | 'medium' | 'low';
 
 export interface ConsensusMatch {
     polymarketIndex: number;
     kalshiIndex: number;
     similarity: SimilarityLevel;
+    direction: MatchDirection;
     confidence: number;
     reasoning: string;
     agentVotes: string[];
@@ -15,6 +18,7 @@ export interface AgentMatch {
     polymarketIndex: number;
     kalshiIndex: number;
     similarity: SimilarityLevel;
+    direction: MatchDirection;
     confidence: number;
     reasoning: string;
 }

@@ -33,7 +33,8 @@ DATABASE_URL="postgres://user:password@localhost:5432/market_db"
 
 # --- Data ingestion ---
 ENABLE_INGESTOR=true             # false serves an already populated DB
-KALSHI_POLLING_INTERVAL_MS=5000
+KALSHI_POLLING_INTERVAL_MS=60000     # each poll sweeps every open market
+POLYMARKET_POLLING_INTERVAL_MS=60000
 
 # --- API Keys for LLM Matching ---
 ANTHROPIC_API_KEY="sk-ant-..."
@@ -99,16 +100,16 @@ The application is structured around a multi-threaded architecture to ensure the
 #### Data Ingestor Worker Thread (I/O Bound)
 
   * Spawns a dedicated thread for continuous market data ingestion.
-  * Connects to **Polymarket (WebSocket)** and **Kalshi (Polling/WebSocket)** streams.
-  * **Persists all incoming market data directly to PostgreSQL.**
+  * Polls the open-market catalogues of **Polymarket (Gamma API)** and **Kalshi (`/events`)**, including each market's best YES/NO bid and ask.
+  * **Batch-upserts each sweep into PostgreSQL**, appending to `price_history` only when a price moved.
 
 #### Matching Process Flow
 
 1.  **Request:** A user calls the `/api/matching/match` endpoint on the **Main Thread**.
-2.  **Fetch & Pre-filter:** The **Matching Engine Service** fetches the latest data from PostgreSQL.
-3.  **Semantic Match:** It delegates the pre-filtering to the **Vector Matching Service**, which embeds each side once with a locally loaded **MiniLM-L6-v2** model and computes **Cosine Similarity** between market titles. Pairs scoring `>= 0.75` survive and are carried forward as hints.
-4.  **LLM/Consensus:** The reduced list of candidates is sent to the LLM agent(s) (Claude/Gemini/ChatGPT) for high-confidence, natural language verification and scoring.
-5.  **Output & Cache:** Results are returned to the user and cached in the **MatchCache** to avoid redundant LLM calls.
+2.  **Fetch:** The **Matching Engine Service** reads the highest-volume open markets from PostgreSQL (fresh prices every call).
+3.  **Candidates:** The **Vector Matching Service** embeds titles with a local **MiniLM-L6-v2** model and keeps each Polymarket market's top-3 Kalshi neighbours.
+4.  **Verdicts:** Pairs already judged are answered from the `match_verdicts` table. Only unseen pairs go to the LLM agent(s), which decide whether the two markets are the *same bet* and whether YES lines up with YES or with NO. Every answer is stored.
+5.  **Pricing:** Each match gets an `arbitrage` quote computed from the current asks and fees (see the root README).
 
 -----
 
@@ -119,9 +120,12 @@ The application is structured around a multi-threaded architecture to ensure the
 | `src/server.ts` | Entry point. Initializes the schema, spawns the Ingestor Worker, mounts routes. |
 | `src/config/index.ts` | Loads `.env` and exports every environment-derived setting. |
 | `src/database/pool.ts` | The single shared `pg` connection pool, plus numeric type parsers. |
-| `src/database/postgres.client.ts` | Schema creation and the ingestion upsert/history writes. |
+| `src/database/postgres.client.ts` | Schema creation/migration and the batched ingestion upsert/history writes. |
 | `src/services/vector-matching.service.ts` | Local embedding generation and cosine similarity. |
-| `src/services/matching-engine.service.ts` | **Core logic.** Fetch, vector pre-filter, batch, LLM verify, cache. |
+| `src/services/matching-engine.service.ts` | **Core logic.** Fetch, vector candidates, verdict lookup, LLM verify, pricing. |
+| `src/services/match-prompt.ts` | The single prompt and response parser shared by every LLM agent. |
+| `src/services/match-verdict.store.ts` | Persisted LLM verdicts per market pair. |
+| `src/services/arbitrage.service.ts` | Prices the YES/NO hedge on a matched pair from asks and fees. |
 | `src/services/consensus.service.ts` | Multi-agent voting across Claude, Gemini and ChatGPT. |
 | `src/services/matching-engine.instance.ts` | The shared engine instance used by every route. |
 | `src/workers/data-ingestor.ts` | Worker thread that runs both ingestors against `PostgresClient`. |
@@ -135,10 +139,10 @@ The primary endpoints are available on the **Main Thread** at `http://localhost:
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Server liveness plus whether the ingestor worker is running. |
-| `POST` | `/api/matching/match` | Runs the full matching pipeline. Filters in the body (`polymarketTicker`, `kalshiTicker`, `startTimestamp`, `endTimestamp`, `limit`). |
+| `POST` | `/api/matching/match` | Runs the full matching pipeline. Filters in the body (`search`, `limit`, `polymarketTicker`, `kalshiTicker`, `startTimestamp`, `endTimestamp`). |
 | `GET` | `/api/matching/match` | Same pipeline, filters as query parameters. |
-| `POST` | `/api/matching/arbitrage` | Matches whose price difference is at least `minPriceDifference` (default `0.05`). |
-| `POST` | `/api/matching/cache/clear` | Clears the match result cache and the embedding cache. |
+| `POST` | `/api/matching/arbitrage` | Matches whose net edge after fees is at least `minNetEdge` dollars per contract pair (default `0`). |
+| `POST` | `/api/matching/cache/clear` | Deletes all stored LLM verdicts and clears the embedding cache. |
 | `GET` | `/api/matching/health` | Matching subsystem health. |
 | `GET` | `/api/polymarket` | Paginated Polymarket rows (`limit`, `offset`). |
 | `GET` | `/api/polymarket/count` | Total Polymarket row count. |

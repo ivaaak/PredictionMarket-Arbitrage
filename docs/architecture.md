@@ -1,5 +1,7 @@
 # Architecture Diagrams
 
+> **Note:** Some diagrams below predate the current pipeline. Polymarket is now polled via the Gamma API (not a WebSocket), and the one-hour result cache was replaced by the persisted `match_verdicts` table: LLM verdicts are stored per market pair while prices are read fresh on every request. See the root README's *Matching Algorithm* and *Arbitrage Detection* sections.
+
 ## System Architecture Diagram
 
 ```mermaid

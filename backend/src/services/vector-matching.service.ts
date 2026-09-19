@@ -94,29 +94,27 @@ export class VectorMatchingService {
     }
 
     /**
-     * Find best matches for a Polymarket item against a list of Kalshi candidates
+     * For each query vector, the indices of the `k` most similar candidates
+     * scoring at least `minScore`, best first.
+     *
+     * A fixed top-k per market is used instead of a global similarity cut-off:
+     * short market titles embed with very uneven absolute scores, so a single
+     * threshold either drops real matches or floods the LLM with noise.
      */
-    public async findMatches(
-        polyMarket: { ticker: string; title: string },
-        kalshiMarkets: { index: number; ticker: string; title: string }[],
-        threshold: number = 0.75
-    ): Promise<number[]> { // Returns indices of Kalshi markets
-        
-        const polyEmbedding = await this.getEmbedding(polyMarket.title);
-        const matches: number[] = [];
-
-        for (const kMarket of kalshiMarkets) {
-            const kEmbedding = await this.getEmbedding(kMarket.title);
-            const score = this.calculateSimilarity(polyEmbedding, kEmbedding);
-
-            if (score >= threshold) {
-                matches.push(kMarket.index);
+    public topMatches(queries: number[][], candidates: number[][], k: number, minScore: number): number[][] {
+        return queries.map(q => {
+            const scored: { index: number; score: number }[] = [];
+            for (let j = 0; j < candidates.length; j++) {
+                const score = this.calculateSimilarity(q, candidates[j]);
+                if (score >= minScore) scored.push({ index: j, score });
             }
-        }
-
-        return matches;
+            return scored
+                .sort((a, b) => b.score - a.score)
+                .slice(0, k)
+                .map(s => s.index);
+        });
     }
-    
+
     // Optional: Clear cache to free memory
     public clearCache() {
         this.embeddingCache.clear();

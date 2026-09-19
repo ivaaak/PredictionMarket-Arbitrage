@@ -1,11 +1,6 @@
-export interface KalshiDataRecord {
-    id: number;
-    ticker: string;
-    source: string;
-    price: number;
-    volume: number;
-    timestamp: number;
-    created_at: string;
-    title?: string;
+import { MarketRecordBase } from './marketRecordBase';
+
+export interface KalshiDataRecord extends MarketRecordBase {
+    /** What YES means within a multi-market event (Kalshi's yes_sub_title). */
     subtitle?: string;
 }

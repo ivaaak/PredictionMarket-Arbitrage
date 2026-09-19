@@ -1,10 +1,15 @@
 // src/database/postgres.client.ts
-import { PoolClient } from 'pg';
 import chalk from 'chalk';
 import { pool } from './pool';
 
-const CREATE_POLYMARKET_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS polymarket_data (
+// Both market tables share one shape. Every price is the dollar price (0-1) of
+// one contract that pays $1, quoted for the market's YES side:
+//   price           - display probability (mid of the YES book, else last trade)
+//   yes_bid/yes_ask - best bid/ask to sell/buy YES
+//   no_bid/no_ask   - best bid/ask to sell/buy NO
+// A NULL bid/ask means there is no resting order on that side. Arbitrage is
+// priced from the asks, never from `price`.
+const MARKET_COLUMNS_SQL = `
     id SERIAL PRIMARY KEY,
     ticker TEXT NOT NULL UNIQUE,
     source TEXT NOT NULL,
@@ -12,31 +17,38 @@ CREATE TABLE IF NOT EXISTS polymarket_data (
     volume DECIMAL NOT NULL,
     timestamp BIGINT NOT NULL,
     title TEXT,
-    outcome TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+`;
+
+// Columns added after the first release. ADD COLUMN IF NOT EXISTS lets an
+// existing database pick them up without a manual migration.
+const MARKET_EXTRA_COLUMNS = [
+    'yes_bid DECIMAL',
+    'yes_ask DECIMAL',
+    'no_bid DECIMAL',
+    'no_ask DECIMAL',
+    'close_time TIMESTAMPTZ',
+    'rules TEXT',
+    'event_title TEXT'
+];
+
+const CREATE_POLYMARKET_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS polymarket_data (${MARKET_COLUMNS_SQL}, outcome TEXT);
+${MARKET_EXTRA_COLUMNS.map(c => `ALTER TABLE polymarket_data ADD COLUMN IF NOT EXISTS ${c};`).join('\n')}
+CREATE INDEX IF NOT EXISTS idx_polymarket_volume ON polymarket_data(volume DESC);
 `;
 
 const CREATE_KALSHI_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS kalshi_data (
-    id SERIAL PRIMARY KEY,
-    ticker TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL,
-    price DECIMAL NOT NULL,
-    volume DECIMAL NOT NULL,
-    timestamp BIGINT NOT NULL,
-    title TEXT,
-    subtitle TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+CREATE TABLE IF NOT EXISTS kalshi_data (${MARKET_COLUMNS_SQL}, subtitle TEXT);
+${MARKET_EXTRA_COLUMNS.map(c => `ALTER TABLE kalshi_data ADD COLUMN IF NOT EXISTS ${c};`).join('\n')}
+CREATE INDEX IF NOT EXISTS idx_kalshi_volume ON kalshi_data(volume DESC);
 `;
 
 const CREATE_MATCHED_EVENTS_SQL = `
 CREATE TABLE IF NOT EXISTS matched_events (
     id SERIAL PRIMARY KEY,
-    
+
     -- Foreign Keys for Data Integrity
     polymarket_id INTEGER REFERENCES polymarket_data(id) ON DELETE CASCADE,
     kalshi_id INTEGER REFERENCES kalshi_data(id) ON DELETE CASCADE,
@@ -50,7 +62,7 @@ CREATE TABLE IF NOT EXISTS matched_events (
     poly_ticker TEXT,
     poly_price DECIMAL,
     poly_volume DECIMAL,
-    
+
     kalshi_ticker TEXT,
     kalshi_price DECIMAL,
     kalshi_volume DECIMAL,
@@ -84,6 +96,23 @@ CREATE INDEX IF NOT EXISTS idx_price_history_ticker ON price_history(ticker);
 CREATE INDEX IF NOT EXISTS idx_price_history_time ON price_history(timestamp);
 `;
 
+// Whether a Polymarket/Kalshi pair describes the same proposition is decided
+// once by the LLMs and does not change when prices move, so the verdict (both
+// positive and negative) is persisted and reused across runs and restarts.
+const CREATE_MATCH_VERDICTS_SQL = `
+CREATE TABLE IF NOT EXISTS match_verdicts (
+    poly_ticker TEXT NOT NULL,
+    kalshi_ticker TEXT NOT NULL,
+    is_match BOOLEAN NOT NULL,
+    similarity TEXT,
+    direction TEXT,
+    confidence DECIMAL,
+    reasoning TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (poly_ticker, kalshi_ticker)
+);
+`;
+
 export interface MarketData {
     ticker: string;
     source: string;
@@ -93,6 +122,87 @@ export interface MarketData {
     title?: string;
     outcome?: string;
     subtitle?: string;
+    yes_bid?: number | null;
+    yes_ask?: number | null;
+    no_bid?: number | null;
+    no_ask?: number | null;
+    close_time?: string | null;
+    rules?: string | null;
+    event_title?: string | null;
+}
+
+type MarketTable = 'polymarket_data' | 'kalshi_data';
+
+// Postgres caps a statement at 65535 bind parameters; sending each batch as a
+// single JSON parameter sidesteps that and keeps a sweep to a few round trips.
+const UPSERT_CHUNK_SIZE = 1000;
+
+async function upsertMarkets(table: MarketTable, platform: string, rows: MarketData[]): Promise<void> {
+    if (rows.length === 0) return;
+
+    const labelColumn = table === 'polymarket_data' ? 'outcome' : 'subtitle';
+
+    for (let i = 0; i < rows.length; i += UPSERT_CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + UPSERT_CHUNK_SIZE).map(r => ({
+            ...r,
+            label: table === 'polymarket_data' ? r.outcome ?? null : r.subtitle ?? null
+        }));
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            // Only rows whose price actually moved are appended to history, so
+            // a full-catalogue sweep does not write thousands of duplicates.
+            await client.query(
+                `WITH incoming AS (
+                    SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
+                        ticker TEXT, source TEXT, price DECIMAL, volume DECIMAL, timestamp BIGINT,
+                        title TEXT, label TEXT, yes_bid DECIMAL, yes_ask DECIMAL, no_bid DECIMAL,
+                        no_ask DECIMAL, close_time TIMESTAMPTZ, rules TEXT, event_title TEXT
+                    )
+                )
+                INSERT INTO price_history (ticker, platform, price, volume, timestamp)
+                SELECT i.ticker, $2, i.price, i.volume, i.timestamp
+                FROM incoming i
+                LEFT JOIN ${table} t ON t.ticker = i.ticker
+                WHERE t.ticker IS NULL OR t.price IS DISTINCT FROM i.price`,
+                [JSON.stringify(chunk), platform]
+            );
+            await client.query(
+                `INSERT INTO ${table} (ticker, source, price, volume, timestamp, title, ${labelColumn},
+                                       yes_bid, yes_ask, no_bid, no_ask, close_time, rules, event_title, updated_at)
+                 SELECT ticker, source, price, volume, timestamp, title, label,
+                        yes_bid, yes_ask, no_bid, no_ask, close_time, rules, event_title, CURRENT_TIMESTAMP
+                 FROM jsonb_to_recordset($1::jsonb) AS x(
+                     ticker TEXT, source TEXT, price DECIMAL, volume DECIMAL, timestamp BIGINT,
+                     title TEXT, label TEXT, yes_bid DECIMAL, yes_ask DECIMAL, no_bid DECIMAL,
+                     no_ask DECIMAL, close_time TIMESTAMPTZ, rules TEXT, event_title TEXT
+                 )
+                 ON CONFLICT (ticker) DO UPDATE SET
+                     source = EXCLUDED.source,
+                     price = EXCLUDED.price,
+                     volume = EXCLUDED.volume,
+                     timestamp = EXCLUDED.timestamp,
+                     title = COALESCE(EXCLUDED.title, ${table}.title),
+                     ${labelColumn} = COALESCE(EXCLUDED.${labelColumn}, ${table}.${labelColumn}),
+                     yes_bid = EXCLUDED.yes_bid,
+                     yes_ask = EXCLUDED.yes_ask,
+                     no_bid = EXCLUDED.no_bid,
+                     no_ask = EXCLUDED.no_ask,
+                     close_time = COALESCE(EXCLUDED.close_time, ${table}.close_time),
+                     rules = COALESCE(EXCLUDED.rules, ${table}.rules),
+                     event_title = COALESCE(EXCLUDED.event_title, ${table}.event_title),
+                     updated_at = CURRENT_TIMESTAMP`,
+                [JSON.stringify(chunk)]
+            );
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
 }
 
 export const PostgresClient = {
@@ -100,14 +210,15 @@ export const PostgresClient = {
         const client = await pool.connect();
         try {
             console.log(chalk.blue.bold('[Postgres]'), chalk.cyan('Initializing database tables...'));
-            
+
             await client.query('BEGIN');
             await client.query(CREATE_POLYMARKET_TABLE_SQL);
             await client.query(CREATE_KALSHI_TABLE_SQL);
             await client.query(CREATE_MATCHED_EVENTS_SQL);
             await client.query(CREATE_PRICE_HISTORY_SQL);
+            await client.query(CREATE_MATCH_VERDICTS_SQL);
             await client.query('COMMIT');
-            
+
             console.log(chalk.blue.bold('[Postgres]'), chalk.green('Database initialized successfully.'));
         } catch (error) {
             await client.query('ROLLBACK');
@@ -118,74 +229,11 @@ export const PostgresClient = {
         }
     },
 
-    async savePolymarketData(data: MarketData): Promise<void> {
-        const client = await pool.connect();
-        try {
-            // Upsert Logic for Polymarket
-            const query = `
-                INSERT INTO polymarket_data (ticker, source, price, volume, timestamp, title, outcome, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
-                ON CONFLICT(ticker) DO UPDATE SET
-                    price = EXCLUDED.price,
-                    volume = EXCLUDED.volume,
-                    timestamp = EXCLUDED.timestamp,
-                    updated_at = CURRENT_TIMESTAMP,
-                    title = COALESCE(EXCLUDED.title, polymarket_data.title),
-                    outcome = COALESCE(EXCLUDED.outcome, polymarket_data.outcome);
-            `;
-            
-            await client.query(query, [
-                data.ticker, data.source, data.price, data.volume, 
-                data.timestamp, data.title || null, data.outcome || null
-            ]);
-
-            // Optional: Record history
-            await this.saveHistory(client, data.ticker, 'polymarket', data.price, data.volume, data.timestamp);
-            
-        } catch (error) {
-            console.error(chalk.red(`[Postgres] Save Polymarket failed for ${data.ticker}:`), error);
-        } finally {
-            client.release();
-        }
+    async savePolymarketMarkets(rows: MarketData[]): Promise<void> {
+        await upsertMarkets('polymarket_data', 'polymarket', rows);
     },
 
-    async saveKalshiData(data: MarketData): Promise<void> {
-        const client = await pool.connect();
-        try {
-            // Upsert Logic for Kalshi
-            const query = `
-                INSERT INTO kalshi_data (ticker, source, price, volume, timestamp, title, subtitle, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
-                ON CONFLICT(ticker) DO UPDATE SET
-                    price = EXCLUDED.price,
-                    volume = EXCLUDED.volume,
-                    timestamp = EXCLUDED.timestamp,
-                    updated_at = CURRENT_TIMESTAMP,
-                    title = COALESCE(EXCLUDED.title, kalshi_data.title),
-                    subtitle = COALESCE(EXCLUDED.subtitle, kalshi_data.subtitle);
-            `;
-
-            await client.query(query, [
-                data.ticker, data.source, data.price, data.volume, 
-                data.timestamp, data.title || null, data.subtitle || null
-            ]);
-
-            // Optional: Record history
-            await this.saveHistory(client, data.ticker, 'kalshi', data.price, data.volume, data.timestamp);
-
-        } catch (error) {
-            console.error(chalk.red(`[Postgres] Save Kalshi failed for ${data.ticker}:`), error);
-        } finally {
-            client.release();
-        }
-    },
-
-    // Helper to save historical data points
-    async saveHistory(client: PoolClient, ticker: string, platform: string, price: number, volume: number, timestamp: number) {
-        const historyQuery = `
-            INSERT INTO price_history (ticker, platform, price, volume, timestamp)
-            VALUES ($1, $2, $3, $4, $5)
-        `;
-        await client.query(historyQuery, [ticker, platform, price, volume, timestamp]);
+    async saveKalshiMarkets(rows: MarketData[]): Promise<void> {
+        await upsertMarkets('kalshi_data', 'kalshi', rows);
     }
 };

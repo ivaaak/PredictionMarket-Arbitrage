@@ -1,11 +1,6 @@
-export interface PolymarketDataRecord {
-    id: number;
-    ticker: string;
-    source: string;
-    price: number;
-    volume: number;
-    timestamp: number;
-    created_at: string;
-    title?: string;
+import { MarketRecordBase } from './marketRecordBase';
+
+export interface PolymarketDataRecord extends MarketRecordBase {
+    /** Label of the outcome treated as YES (usually "Yes", or a team/candidate name). */
     outcome?: string;
 }

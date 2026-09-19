@@ -61,7 +61,7 @@ export function MatchingPanel({ onMatchStart, onMatchComplete, isMatching }: Mat
                             type="text"
                             className={styles.input}
                             placeholder="Search markets (e.g., 'Fed Rate')"
-                            onChange={(e) => setFilters({ ...filters, polymarketTicker: e.target.value || undefined })}
+                            onChange={(e) => setFilters({ ...filters, search: e.target.value || undefined })}
                         />
                     </div>
 

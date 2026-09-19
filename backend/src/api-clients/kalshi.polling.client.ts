@@ -1,101 +1,143 @@
 import chalk from 'chalk';
 import { KALSHI_API_BASE } from '../config';
+import { MarketData } from '../database/postgres.client';
 
+// Kalshi quotes every price as a fixed-point dollar string ("0.4200") and
+// every size/volume as a fixed-point string ("118844.56"). The legacy integer
+// cent fields (last_price, yes_bid, volume, ...) are no longer returned.
 interface KalshiMarket {
     ticker: string;
+    event_ticker: string;
+    market_type?: string;
+    status?: string;
     title: string;
-    subtitle?: string;
-    yes_price?: number;
-    no_price?: number;
-    volume?: number;
-    last_price?: number;
+    yes_sub_title?: string;
+    rules_primary?: string;
+    close_time?: string;
+    last_price_dollars?: string;
+    yes_bid_dollars?: string;
+    yes_ask_dollars?: string;
+    no_bid_dollars?: string;
+    no_ask_dollars?: string;
+    volume_fp?: string;
 }
 
-interface KalshiMarketsResponse {
-    markets: KalshiMarket[];
+interface KalshiEvent {
+    event_ticker: string;
+    title: string;
+    markets?: KalshiMarket[];
+}
+
+interface KalshiEventsResponse {
+    events: KalshiEvent[];
     cursor?: string;
 }
 
-export interface KalshiPollingUpdate {
-    ticker_name: string;
-    price: number;
-    volume: number;
-    title?: string;
-    subtitle?: string;
+const PAGE_SIZE = 200;
+// Kalshi's basic tier allows ~20 reads/second; stay well under it.
+const PAGE_DELAY_MS = 150;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function parseDollars(value?: string): number | null {
+    if (value === undefined || value === null || value === '') return null;
+    const n = parseFloat(value);
+    return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * A bid of 0 or an ask of 1 is how Kalshi reports an empty side of the book.
+ */
+function bidOrNull(value?: string): number | null {
+    const n = parseDollars(value);
+    return n !== null && n > 0 ? n : null;
+}
+
+function askOrNull(value?: string): number | null {
+    const n = parseDollars(value);
+    return n !== null && n > 0 && n < 1 ? n : null;
+}
+
+export function toMarketData(event: KalshiEvent, market: KalshiMarket, now: number): MarketData {
+    const yesBid = bidOrNull(market.yes_bid_dollars);
+    const yesAsk = askOrNull(market.yes_ask_dollars);
+    const last = parseDollars(market.last_price_dollars) ?? 0;
+
+    return {
+        ticker: market.ticker,
+        source: 'Kalshi_Polling',
+        price: yesBid !== null && yesAsk !== null ? (yesBid + yesAsk) / 2 : last,
+        volume: parseDollars(market.volume_fp) ?? 0,
+        timestamp: now,
+        title: market.title,
+        // In multi-market events (e.g. "Fed decision" -> one market per rate)
+        // the market title alone is ambiguous; yes_sub_title names the outcome.
+        subtitle: market.yes_sub_title || undefined,
+        event_title: event.title,
+        yes_bid: yesBid,
+        yes_ask: yesAsk,
+        no_bid: bidOrNull(market.no_bid_dollars),
+        no_ask: askOrNull(market.no_ask_dollars),
+        close_time: market.close_time || null,
+        rules: market.rules_primary || null
+    };
+}
+
+/**
+ * Polls the full catalogue of open Kalshi events (with their markets) and hands
+ * each sweep to the callback as one batch.
+ */
 export class KalshiPollingClient {
     private baseUrl = KALSHI_API_BASE;
     private pollingInterval: NodeJS.Timeout | null = null;
-    private updateCallback: (data: KalshiPollingUpdate) => void | Promise<void>;
-    private intervalMs: number;
-    private lastPrices: Map<string, number> = new Map();
-    // Guards against overlapping polls when a cycle outruns the interval.
+    // Guards against overlapping polls when a sweep outruns the interval.
     private isPollInFlight = false;
 
     constructor(
-        updateCallback: (data: KalshiPollingUpdate) => void | Promise<void>,
-        intervalMs: number = 30000 // Default: poll every 30 seconds
-    ) {
-        this.updateCallback = updateCallback;
-        this.intervalMs = intervalMs;
+        private readonly onBatch: (markets: MarketData[]) => Promise<void>,
+        private readonly intervalMs: number,
+        private readonly maxPages: number
+    ) {}
+
+    private async fetchPage(cursor?: string): Promise<KalshiEventsResponse> {
+        const params = new URLSearchParams({
+            status: 'open',
+            with_nested_markets: 'true',
+            limit: String(PAGE_SIZE)
+        });
+        if (cursor) params.set('cursor', cursor);
+
+        const response = await fetch(`${this.baseUrl}/events?${params}`);
+        if (!response.ok) {
+            throw new Error(`Kalshi /events returned ${response.status}`);
+        }
+        return response.json() as Promise<KalshiEventsResponse>;
     }
 
-    /**
-     * Fetch markets from Kalshi public API
-     */
-    private async fetchMarkets(): Promise<KalshiMarket[]> {
-        try {
-            const response = await fetch(`${this.baseUrl}/markets?limit=100&status=open`);
-            
-            if (!response.ok) {
-                console.error(
-                    chalk.red.bold('[KALSHI-POLLING]'), 
-                    chalk.red(`API request failed: ${response.status}`)
-                );
-                return [];
+    private async fetchAllMarkets(): Promise<MarketData[]> {
+        const now = Math.floor(Date.now() / 1000);
+        const markets: MarketData[] = [];
+        let cursor: string | undefined;
+
+        for (let page = 0; page < this.maxPages; page++) {
+            const data = await this.fetchPage(cursor);
+
+            for (const event of data.events || []) {
+                for (const market of event.markets || []) {
+                    if (market.market_type && market.market_type !== 'binary') continue;
+                    if (market.status && market.status !== 'active') continue;
+                    markets.push(toMarketData(event, market, now));
+                }
             }
 
-            const data: KalshiMarketsResponse = await response.json();
-            return data.markets || [];
-        } catch (error) {
-            console.error(chalk.red.bold('[KALSHI-POLLING]'), chalk.red('Error fetching markets:'), error);
-            return [];
+            cursor = data.cursor || undefined;
+            if (!cursor) break;
+            await sleep(PAGE_DELAY_MS);
         }
+
+        return markets;
     }
 
-    /**
-     * Process market data and call update callback for each market
-     */
-    private async processMarkets(markets: KalshiMarket[]) {
-        for (const market of markets) {
-            // Use last_price, or calculate from yes_price if available
-            const price = market.last_price ?? market.yes_price ?? 0;
-            const volume = market.volume ?? 0;
-
-            // Only send updates if price has changed or this is first fetch
-            const lastPrice = this.lastPrices.get(market.ticker);
-            if (lastPrice === undefined || lastPrice !== price) {
-                this.lastPrices.set(market.ticker, price);
-
-                const update: KalshiPollingUpdate = {
-                    ticker_name: market.ticker,
-                    price: price,
-                    volume: volume,
-                    title: market.title,
-                    subtitle: market.subtitle
-                };
-
-                // Awaited so a batch of 100 markets does not fire 100
-                // concurrent writes at a pool that holds 10 connections.
-                await this.updateCallback(update);
-            }
-        }
-    }
-
-    /**
-     * Polling function that runs at intervals
-     */
     private async poll() {
         if (this.isPollInFlight) {
             console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.yellow('Previous poll still running, skipping this tick'));
@@ -104,44 +146,26 @@ export class KalshiPollingClient {
         this.isPollInFlight = true;
 
         try {
-            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.cyan('Fetching markets...'));
-            const markets = await this.fetchMarkets();
-
-            if (markets.length > 0) {
-                console.log(
-                    chalk.red.bold('[KALSHI-POLLING]'),
-                    chalk.green(`Fetched ${markets.length} markets`)
-                );
-                await this.processMarkets(markets);
-            } else {
-                console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.yellow('No markets fetched'));
-            }
+            const markets = await this.fetchAllMarkets();
+            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.green(`Fetched ${markets.length} open markets`));
+            await this.onBatch(markets);
+        } catch (error) {
+            console.error(chalk.red.bold('[KALSHI-POLLING]'), chalk.red('Poll failed:'), error);
         } finally {
             this.isPollInFlight = false;
         }
     }
 
-    /**
-     * Start polling for market data
-     */
     public startPolling() {
         console.log(
-            chalk.red.bold('[KALSHI-POLLING]'), 
+            chalk.red.bold('[KALSHI-POLLING]'),
             chalk.cyan(`Starting polling every ${this.intervalMs / 1000} seconds`)
         );
-        
-        // Fetch immediately on start
-        this.poll();
 
-        // Then poll at intervals
-        this.pollingInterval = setInterval(() => {
-            this.poll();
-        }, this.intervalMs);
+        this.poll();
+        this.pollingInterval = setInterval(() => this.poll(), this.intervalMs);
     }
 
-    /**
-     * Stop polling
-     */
     public stopPolling() {
         if (this.pollingInterval) {
             clearInterval(this.pollingInterval);
@@ -150,9 +174,6 @@ export class KalshiPollingClient {
         }
     }
 
-    /**
-     * Check if currently polling
-     */
     public isPolling(): boolean {
         return this.pollingInterval !== null;
     }
