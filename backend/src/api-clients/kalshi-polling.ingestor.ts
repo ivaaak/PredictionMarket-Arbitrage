@@ -6,7 +6,7 @@ import { MarketData, PostgresClient } from '../database/postgres.client';
  * This function handles every market update received from polling
  * and persists it to the database using the provided PostgresClient.
  */
-const handleMarketUpdate = (data: KalshiPollingUpdate) => {
+const handleMarketUpdate = async (data: KalshiPollingUpdate) => {
     // Map the incoming Kalshi data to the required MarketData interface
     const dataToSave: MarketData = {
         ticker: data.ticker_name,
@@ -25,8 +25,8 @@ const handleMarketUpdate = (data: KalshiPollingUpdate) => {
     );
     
     try {
-        const lastID = PostgresClient.saveKalshiData(dataToSave);
-        console.log(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.green(`Successfully saved. Row ID: ${lastID}`));
+        await PostgresClient.saveKalshiData(dataToSave);
+        console.log(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.green(`Successfully saved ${dataToSave.ticker}.`));
     } catch (e) {
         console.error(
             chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), 

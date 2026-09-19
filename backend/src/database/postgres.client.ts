@@ -1,16 +1,7 @@
 // src/database/postgres.client.ts
-import { Pool, PoolClient } from 'pg';
+import { PoolClient } from 'pg';
 import chalk from 'chalk';
-import * as dotenv from 'dotenv';
-
-dotenv.config();
-
-// Ensure you have DATABASE_URL in your .env file
-// Example: postgres://user:password@localhost:5432/market_db
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
+import { pool } from './pool';
 
 const CREATE_POLYMARKET_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS polymarket_data (

@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { KALSHI_API_BASE } from '../config';
 
 interface KalshiMarket {
     ticker: string;
@@ -24,14 +25,16 @@ export interface KalshiPollingUpdate {
 }
 
 export class KalshiPollingClient {
-    private baseUrl = 'https://api.elections.kalshi.com/trade-api/v2';
+    private baseUrl = KALSHI_API_BASE;
     private pollingInterval: NodeJS.Timeout | null = null;
-    private updateCallback: (data: KalshiPollingUpdate) => void;
+    private updateCallback: (data: KalshiPollingUpdate) => void | Promise<void>;
     private intervalMs: number;
     private lastPrices: Map<string, number> = new Map();
+    // Guards against overlapping polls when a cycle outruns the interval.
+    private isPollInFlight = false;
 
     constructor(
-        updateCallback: (data: KalshiPollingUpdate) => void,
+        updateCallback: (data: KalshiPollingUpdate) => void | Promise<void>,
         intervalMs: number = 30000 // Default: poll every 30 seconds
     ) {
         this.updateCallback = updateCallback;
@@ -64,7 +67,7 @@ export class KalshiPollingClient {
     /**
      * Process market data and call update callback for each market
      */
-    private processMarkets(markets: KalshiMarket[]) {
+    private async processMarkets(markets: KalshiMarket[]) {
         for (const market of markets) {
             // Use last_price, or calculate from yes_price if available
             const price = market.last_price ?? market.yes_price ?? 0;
@@ -83,7 +86,9 @@ export class KalshiPollingClient {
                     subtitle: market.subtitle
                 };
 
-                this.updateCallback(update);
+                // Awaited so a batch of 100 markets does not fire 100
+                // concurrent writes at a pool that holds 10 connections.
+                await this.updateCallback(update);
             }
         }
     }
@@ -92,17 +97,27 @@ export class KalshiPollingClient {
      * Polling function that runs at intervals
      */
     private async poll() {
-        console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.cyan('Fetching markets...'));
-        const markets = await this.fetchMarkets();
-        
-        if (markets.length > 0) {
-            console.log(
-                chalk.red.bold('[KALSHI-POLLING]'), 
-                chalk.green(`Fetched ${markets.length} markets`)
-            );
-            this.processMarkets(markets);
-        } else {
-            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.yellow('No markets fetched'));
+        if (this.isPollInFlight) {
+            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.yellow('Previous poll still running, skipping this tick'));
+            return;
+        }
+        this.isPollInFlight = true;
+
+        try {
+            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.cyan('Fetching markets...'));
+            const markets = await this.fetchMarkets();
+
+            if (markets.length > 0) {
+                console.log(
+                    chalk.red.bold('[KALSHI-POLLING]'),
+                    chalk.green(`Fetched ${markets.length} markets`)
+                );
+                await this.processMarkets(markets);
+            } else {
+                console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.yellow('No markets fetched'));
+            }
+        } finally {
+            this.isPollInFlight = false;
         }
     }
 
