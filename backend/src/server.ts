@@ -2,18 +2,16 @@ import express from 'express';
 import { Worker } from 'worker_threads';
 import path from 'path';
 import chalk from 'chalk';
-import { PORT } from './config';
+import { PORT, ENABLE_INGESTOR, KALSHI_POLLING_INTERVAL_MS } from './config';
+import { PostgresClient } from './database/postgres.client';
+import { closePool } from './database/pool';
 import polymarketRoutes from './controller/polymarket.controller';
 import kalshiRoutes from './controller/kalshi.controller';
 import matchingRoutes from './controller/matching.controller';
 import resultRoutes from './controller/results.controller';
 
-// 1. Dedicated I/O Worker (for data ingestion/streaming)
+// Dedicated I/O worker for data ingestion/streaming.
 let ingestorWorker: Worker | null = null;
-
-// 2. CPU-bound Worker Pool - DISABLED
-// let taskWorkerPool: WorkerPool | null = null;
-// const TASK_WORKER_SCRIPT = path.resolve(__dirname, 'workers', 'task-worker.ts');
 
 /**
  * Spawns a new worker thread to handle all market data ingestion.
@@ -22,12 +20,14 @@ let ingestorWorker: Worker | null = null;
 function startIngestorWorkerThread() {
     console.log(chalk.blue.bold('[MAIN]'), chalk.cyan('Spawning Data Ingestor Worker Thread...'));
 
-    const workerPath = path.resolve(__dirname, 'workers', 'data-ingestor.ts');
-    const workerData = { kalshiPollingInterval: 5000 };
+    // Under ts-node this module is a .ts file and the worker needs the ts-node
+    // hook; after `npm run build` it is a .js file in dist/ and must not get it.
+    const isTypeScript = __filename.endsWith('.ts');
+    const workerPath = path.resolve(__dirname, 'workers', `data-ingestor${isTypeScript ? '.ts' : '.js'}`);
 
     ingestorWorker = new Worker(workerPath, {
-        workerData: workerData,
-        execArgv: ['--require', 'ts-node/register']
+        workerData: { kalshiPollingInterval: KALSHI_POLLING_INTERVAL_MS },
+        execArgv: isTypeScript ? ['--require', 'ts-node/register'] : []
     });
 
     ingestorWorker.on('message', (message) => {
@@ -64,14 +64,20 @@ function stopIngestorWorkerThread() {
                 console.warn(chalk.blue.bold('[MAIN]'), chalk.red('Ingestor Worker did not shut down in time. Terminating forcefully.'));
                 ingestorWorker.terminate();
             }
-        }, 5000); 
+        }, 5000);
     }
 }
 
-
 async function startServer() {
-    // Start data ingestion in a separate thread (I/O-bound)
-    // startIngestorWorkerThread();
+    // Create the tables before anything serves traffic. The ingestor worker also
+    // calls this, but the API must not depend on the worker being enabled.
+    await PostgresClient.initialize();
+
+    if (ENABLE_INGESTOR) {
+        startIngestorWorkerThread();
+    } else {
+        console.log(chalk.blue.bold('[MAIN]'), chalk.yellow('Ingestor disabled (ENABLE_INGESTOR=false). Serving existing data only.'));
+    }
 
     const app = express();
     app.use(express.json());
@@ -82,29 +88,39 @@ async function startServer() {
     app.use('/api/matching', matchingRoutes);
     app.use('/api/results', resultRoutes);
 
+    app.get('/api/health', (_req, res) => {
+        res.json({
+            status: 'healthy',
+            ingestorRunning: ingestorWorker !== null,
+            timestamp: new Date().toISOString()
+        });
+    });
 
     const server = app.listen(PORT, () => {
         console.log(chalk.green.bold(`✓ Server running on port ${PORT}`));
     });
 
     // Handle graceful shutdown of the server and the workers
-    process.on('SIGTERM', () => {
-        console.log(chalk.blue.bold('\n[MAIN]'), chalk.yellow('SIGTERM signal received. Shutting down gracefully...'));
-        server.close(() => {
-            stopIngestorWorkerThread();
-            console.log(chalk.blue.bold('[MAIN]'), chalk.green('HTTP server closed.'));
-            process.exit(0);
-        });
-    });
+    let shuttingDown = false;
+    const shutdown = (signal: string) => {
+        if (shuttingDown) return;
+        shuttingDown = true;
 
-    process.on('SIGINT', () => {
-        console.log(chalk.blue.bold('\n[MAIN]'), chalk.yellow('SIGINT signal received. Shutting down gracefully...'));
-        server.close(() => {
-            stopIngestorWorkerThread();
+        console.log(chalk.blue.bold('\n[MAIN]'), chalk.yellow(`${signal} signal received. Shutting down gracefully...`));
+        stopIngestorWorkerThread();
+
+        server.close(async () => {
             console.log(chalk.blue.bold('[MAIN]'), chalk.green('HTTP server closed.'));
+            await closePool().catch(() => undefined);
             process.exit(0);
         });
-    });
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-startServer();
+startServer().catch((error) => {
+    console.error(chalk.red.bold('[MAIN]'), chalk.red('Failed to start server:'), error);
+    process.exit(1);
+});

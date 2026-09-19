@@ -17,9 +17,9 @@ export class MatchingEngineService {
     private consensusService?: ConsensusService;
     private textProcessor: TextProcessor;
     private matchCache: MatchCache;
-    private vectorService: VectorMatchingService | null = null;
     
     private readonly MAX_RECORDS_PER_BATCH = 50;
+    private readonly VECTOR_SIMILARITY_THRESHOLD = 0.75;
     private readonly CACHE_TTL_MS = 3600000;
     private useConsensus: boolean;
 
@@ -46,42 +46,39 @@ export class MatchingEngineService {
         this.textProcessor = new TextProcessor();
         this.matchCache = new MatchCache(this.CACHE_TTL_MS);
 
-        // Initialize Vector Service Asynchronously
-        VectorMatchingService.getInstance().then(service => {
-            this.vectorService = service;
-            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Vector Matching Service linked.'));
-        }).catch(err => {
-            console.error(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.red('Failed to link Vector Service:'), err);
-        });
+        // Warm the embedding model in the background so the first match request
+        // does not pay the download cost. getInstance() memoises the load, so
+        // the pre-filter simply awaits the same promise later; a failure here is
+        // not fatal because getInstance() retries on the next request.
+        VectorMatchingService.getInstance()
+            .then(() => console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Vector Matching Service ready.')))
+            .catch(err => console.error(
+                chalk.blue.bold('[MATCHING-ENGINE]'),
+                chalk.yellow('Vector model not preloaded (will retry on first match):'),
+                err instanceof Error ? err.message : err
+            ));
     }
 
     /**
      * Fetch records from both databases based on filters
      */
-    private fetchRecords(filters: MatchFilters): {
+    private async fetchRecords(filters: MatchFilters): Promise<{
         polymarketRecords: PolymarketDataRecord[];
         kalshiRecords: KalshiDataRecord[];
-    } {
-        let polymarketRecords: PolymarketDataRecord[];
-        let kalshiRecords: KalshiDataRecord[];
-
-        // Fetch Polymarket records
-        if (filters.polymarketTicker) {
-            polymarketRecords = PolymarketService.getByTicker(filters.polymarketTicker, filters.limit);
-        } else if (filters.startTimestamp && filters.endTimestamp) {
-            polymarketRecords = PolymarketService.getByTimeRange(filters.startTimestamp, filters.endTimestamp);
-        } else {
-            polymarketRecords = PolymarketService.getLatestByTicker();
-        }
-
-        // Fetch Kalshi records
-        if (filters.kalshiTicker) {
-            kalshiRecords = KalshiService.getByTicker(filters.kalshiTicker, filters.limit);
-        } else if (filters.startTimestamp && filters.endTimestamp) {
-            kalshiRecords = KalshiService.getByTimeRange(filters.startTimestamp, filters.endTimestamp);
-        } else {
-            kalshiRecords = KalshiService.getLatestByTicker();
-        }
+    }> {
+        // Both sides are independent queries, so issue them concurrently.
+        let [polymarketRecords, kalshiRecords] = await Promise.all([
+            filters.polymarketTicker
+                ? PolymarketService.getByTicker(filters.polymarketTicker, filters.limit)
+                : filters.startTimestamp && filters.endTimestamp
+                    ? PolymarketService.getByTimeRange(filters.startTimestamp, filters.endTimestamp)
+                    : PolymarketService.getLatestByTicker(),
+            filters.kalshiTicker
+                ? KalshiService.getByTicker(filters.kalshiTicker, filters.limit)
+                : filters.startTimestamp && filters.endTimestamp
+                    ? KalshiService.getByTimeRange(filters.startTimestamp, filters.endTimestamp)
+                    : KalshiService.getLatestByTicker()
+        ]);
 
         // Apply limit if specified
         if (filters.limit) {
@@ -93,8 +90,13 @@ export class MatchingEngineService {
     }
 
     /**
-     * Pre-filter records using Semantic Vector Embeddings
-     * This replaces the old token-overlap method for higher accuracy.
+     * Pre-filter records using Semantic Vector Embeddings.
+     *
+     * Returns the surviving records plus `quickMatches`, a map of
+     * FILTERED-array indices (poly -> kalshi). The indices are deliberately in
+     * the filtered index space because that is the space the LLM prompts
+     * enumerate; emitting original-array indices here would make every hint
+     * point at the wrong market.
      */
     private async preFilterRecords(
         polymarketRecords: PolymarketDataRecord[],
@@ -104,52 +106,70 @@ export class MatchingEngineService {
         kalshiRecords: KalshiDataRecord[];
         quickMatches: Map<number, number[]>;
     }> {
-        // Ensure Vector Service is ready
-        if (!this.vectorService) {
-            console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow('Vector service initializing on-demand...'));
-            this.vectorService = await VectorMatchingService.getInstance();
-        }
+        const vectorService = await VectorMatchingService.getInstance();
 
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.cyan('Starting semantic pre-filtering...'));
 
-        const quickMatches = new Map<number, number[]>();
+        // Use the title where we have one, otherwise fall back to the ticker,
+        // since the ticker still carries some semantic signal.
+        const polyTexts = polymarketRecords.map(r => r.title || r.ticker);
+        const kalshiTexts = kalshiRecords.map(r => r.title || r.ticker);
+
+        // Embed both sides once up front, then compare in memory.
+        const [polyEmbeddings, kalshiEmbeddings] = await Promise.all([
+            vectorService.getEmbeddings(polyTexts),
+            vectorService.getEmbeddings(kalshiTexts)
+        ]);
+
+        // Original-index pairs that clear the similarity threshold.
+        const rawMatches = new Map<number, number[]>();
         const relevantPolymarketIndices = new Set<number>();
         const relevantKalshiIndices = new Set<number>();
 
-        // Map Kalshi records to the format expected by VectorService
-        // We use Title if available, otherwise Ticker, to get the best semantic meaning
-        const kalshiItems = kalshiRecords.map((r, index) => ({
-            index,
-            ticker: r.ticker,
-            title: r.title || r.ticker 
-        }));
+        for (let i = 0; i < polyEmbeddings.length; i++) {
+            const hits: number[] = [];
 
-        // Iterate through Polymarket records and find semantic matches
-        for (let i = 0; i < polymarketRecords.length; i++) {
-            const polyRecord = polymarketRecords[i];
-            const polyText = polyRecord.title || polyRecord.ticker;
+            for (let j = 0; j < kalshiEmbeddings.length; j++) {
+                const score = vectorService.calculateSimilarity(polyEmbeddings[i], kalshiEmbeddings[j]);
+                if (score >= this.VECTOR_SIMILARITY_THRESHOLD) {
+                    hits.push(j);
+                }
+            }
 
-            // Find matches with a similarity threshold of 0.75 (High semantic correlation)
-            const matchedKalshiIndices = await this.vectorService.findMatches(
-                { ticker: polyRecord.ticker, title: polyText },
-                kalshiItems,
-                0.75
-            );
-
-            if (matchedKalshiIndices.length > 0) {
-                quickMatches.set(i, matchedKalshiIndices);
+            if (hits.length > 0) {
+                rawMatches.set(i, hits);
                 relevantPolymarketIndices.add(i);
-                matchedKalshiIndices.forEach(idx => relevantKalshiIndices.add(idx));
+                hits.forEach(j => relevantKalshiIndices.add(j));
             }
         }
 
-        // Filter to only relevant records
-        const filteredPolymarket = polymarketRecords.filter((_, i) =>
-            relevantPolymarketIndices.has(i)
-        );
-        const filteredKalshi = kalshiRecords.filter((_, i) =>
-            relevantKalshiIndices.has(i)
-        );
+        // Filter to only relevant records, remembering where each one moved to.
+        const filteredPolymarket: PolymarketDataRecord[] = [];
+        const polyIndexRemap = new Map<number, number>();
+        polymarketRecords.forEach((record, i) => {
+            if (relevantPolymarketIndices.has(i)) {
+                polyIndexRemap.set(i, filteredPolymarket.length);
+                filteredPolymarket.push(record);
+            }
+        });
+
+        const filteredKalshi: KalshiDataRecord[] = [];
+        const kalshiIndexRemap = new Map<number, number>();
+        kalshiRecords.forEach((record, j) => {
+            if (relevantKalshiIndices.has(j)) {
+                kalshiIndexRemap.set(j, filteredKalshi.length);
+                filteredKalshi.push(record);
+            }
+        });
+
+        // Translate the hint map into the filtered index space.
+        const quickMatches = new Map<number, number[]>();
+        rawMatches.forEach((kalshiIndices, polyIndex) => {
+            quickMatches.set(
+                polyIndexRemap.get(polyIndex)!,
+                kalshiIndices.map(j => kalshiIndexRemap.get(j)!)
+            );
+        });
 
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.green('Semantic filtering complete:'));
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.gray(`  - Polymarket: ${polymarketRecords.length} → ${filteredPolymarket.length} records`));
@@ -161,6 +181,24 @@ export class MatchingEngineService {
             kalshiRecords: filteredKalshi,
             quickMatches
         };
+    }
+
+    /**
+     * Narrow the hint map to a single batch, rebasing the Polymarket indices so
+     * they line up with the positions the prompt will actually enumerate.
+     */
+    private sliceQuickMatchesForBatch(
+        quickMatches: Map<number, number[]>,
+        batchOffset: number,
+        batchSize: number
+    ): Map<number, number[]> {
+        const sliced = new Map<number, number[]>();
+        quickMatches.forEach((kalshiIndices, polyIndex) => {
+            if (polyIndex >= batchOffset && polyIndex < batchOffset + batchSize) {
+                sliced.set(polyIndex - batchOffset, kalshiIndices);
+            }
+        });
+        return sliced;
     }
 
     /**
@@ -177,7 +215,7 @@ export class MatchingEngineService {
             return cachedResult;
         }
 
-        const { polymarketRecords, kalshiRecords } = this.fetchRecords(filters);
+        const { polymarketRecords, kalshiRecords } = await this.fetchRecords(filters);
 
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow(`Fetched ${polymarketRecords.length} Polymarket records and ${kalshiRecords.length} Kalshi records`));
 
@@ -211,17 +249,19 @@ export class MatchingEngineService {
         const matches: MarketMatch[] = [];
         const polyBatches = this.createBatches(filteredPoly, this.MAX_RECORDS_PER_BATCH);
 
+        let batchOffset = 0;
+
         for (let i = 0; i < polyBatches.length; i++) {
             console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.magenta(`Processing batch ${i + 1}/${polyBatches.length}`));
-            
+
+            const batch = polyBatches[i];
             const batchMatches = await this.processMatchingBatch(
-                polyBatches[i],
+                batch,
                 filteredKalshi,
-                quickMatches,
-                polymarketRecords,
-                kalshiRecords
+                this.sliceQuickMatchesForBatch(quickMatches, batchOffset, batch.length)
             );
             matches.push(...batchMatches);
+            batchOffset += batch.length;
         }
 
         // Remove duplicates and sort by confidence
@@ -247,9 +287,7 @@ export class MatchingEngineService {
     private async processMatchingBatch(
         polymarketBatch: PolymarketDataRecord[],
         kalshiRecords: KalshiDataRecord[],
-        quickMatches: Map<number, number[]>,
-        originalPolyRecords: PolymarketDataRecord[],
-        originalKalshiRecords: KalshiDataRecord[]
+        quickMatches: Map<number, number[]>
     ): Promise<MarketMatch[]> {
         if (this.useConsensus) {
             return this.processWithConsensus(polymarketBatch, kalshiRecords, quickMatches);
@@ -337,18 +375,23 @@ export class MatchingEngineService {
         kalshiRecords: KalshiDataRecord[],
         quickMatches: Map<number, number[]>
     ): string {
+        // Titles carry far more signal than tickers, so send both when available.
         const polymarketData = polymarketRecords.map((r, i) => {
-            const normalized = this.textProcessor.normalize(r.ticker);
-            return `${i}. Ticker: ${r.ticker}
-   Normalized: ${normalized}
+            const title = r.title || r.ticker;
+            return `${i}. Title: ${title}
+   Ticker: ${r.ticker}
+   Normalized: ${this.textProcessor.normalize(title)}
+   Outcome: ${r.outcome || 'n/a'}
    Price: $${r.price}, Volume: ${r.volume}
    Timestamp: ${r.timestamp}`;
         }).join('\n\n');
 
         const kalshiData = kalshiRecords.map((r, i) => {
-            const normalized = this.textProcessor.normalize(r.ticker);
-            return `${i}. Ticker: ${r.ticker}
-   Normalized: ${normalized}
+            const title = r.title || r.ticker;
+            return `${i}. Title: ${title}
+   Ticker: ${r.ticker}
+   Normalized: ${this.textProcessor.normalize(title)}
+   Subtitle: ${r.subtitle || 'n/a'}
    Price: $${r.price}, Volume: ${r.volume}
    Timestamp: ${r.timestamp}`;
         }).join('\n\n');
@@ -473,11 +516,12 @@ Only include matches with confidence >= 0.6. Return valid JSON only.`;
             });
     }
 
-    clearCache(): void {
+    async clearCache(): Promise<void> {
         this.matchCache.clear();
-        if (this.vectorService) {
-             this.vectorService.clearCache();
-        }
+        // Only clear the embedding cache if the model actually loaded.
+        await VectorMatchingService.getInstance()
+            .then(service => service.clearCache())
+            .catch(() => undefined);
         console.log(chalk.blue.bold('[MATCHING-ENGINE]'), chalk.yellow('Cache cleared'));
     }
 }

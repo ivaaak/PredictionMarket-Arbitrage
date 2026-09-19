@@ -175,17 +175,18 @@ export class ConsensusService {
         kalshiRecords: KalshiDataRecord[],
         quickMatches?: Map<number, number[]>
     ): string {
-        const polymarketData = polymarketRecords.map((r, i) => 
-            `${i}. Ticker: ${r.ticker}\n   Price: $${r.price}, Volume: ${r.volume}\n   Timestamp: ${r.timestamp}`
+        // Titles carry far more signal than tickers, so send both when available.
+        const polymarketData = polymarketRecords.map((r, i) =>
+            `${i}. Title: ${r.title || r.ticker}\n   Ticker: ${r.ticker}\n   Outcome: ${r.outcome || 'n/a'}\n   Price: $${r.price}, Volume: ${r.volume}\n   Timestamp: ${r.timestamp}`
         ).join('\n\n');
 
-        const kalshiData = kalshiRecords.map((r, i) => 
-            `${i}. Ticker: ${r.ticker}\n   Price: $${r.price}, Volume: ${r.volume}\n   Timestamp: ${r.timestamp}`
+        const kalshiData = kalshiRecords.map((r, i) =>
+            `${i}. Title: ${r.title || r.ticker}\n   Ticker: ${r.ticker}\n   Subtitle: ${r.subtitle || 'n/a'}\n   Price: $${r.price}, Volume: ${r.volume}\n   Timestamp: ${r.timestamp}`
         ).join('\n\n');
 
         let hints = '';
         if (quickMatches && quickMatches.size > 0) {
-            hints = '\n\nPre-filtered potential matches (high token similarity):';
+            hints = '\n\nPre-filtered potential matches (high semantic vector similarity):';
             quickMatches.forEach((kalshiIndices, polyIndex) => {
                 hints += `\n- Polymarket ${polyIndex} may match Kalshi: ${kalshiIndices.join(', ')}`;
             });
@@ -288,8 +289,12 @@ Only include matches with confidence >= 0.6. Return valid JSON only, no markdown
                 }
 
                 const matchData = matchMap.get(key)!;
+                // One vote per agent: an agent repeating a pair in its response
+                // must not inflate the consensus score above 1.0.
+                if (!matchData.votes.has(response.agent)) {
+                    matchData.agentVotes.push(response.agent);
+                }
                 matchData.votes.set(response.agent, match);
-                matchData.agentVotes.push(response.agent);
             }
         }
 
@@ -298,7 +303,7 @@ Only include matches with confidence >= 0.6. Return valid JSON only, no markdown
         const totalAgents = agentResponses.length;
         const requiredVotes = Math.ceil(totalAgents * this.CONSENSUS_THRESHOLD);
 
-        matchMap.forEach((matchData, key) => {
+        matchMap.forEach((matchData) => {
             const voteCount = matchData.agentVotes.length;
             const consensusScore = voteCount / totalAgents;
 

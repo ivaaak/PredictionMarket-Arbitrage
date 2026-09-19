@@ -1,9 +1,10 @@
 import axios from 'axios';
 import chalk from 'chalk';
+import { DISCORD_WEBHOOK_URL } from '../config';
 
 export class AlertingService {
-    // Replace with your Discord Webhook URL
-    private static DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
+    // Set DISCORD_WEBHOOK_URL in .env to enable alerts; alerts are a no-op without it.
+    private static DISCORD_WEBHOOK = DISCORD_WEBHOOK_URL;
 
     static async sendArbitrageAlert(opportunity: {
         polyTicker: string;

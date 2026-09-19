@@ -26,6 +26,7 @@ graph TB
         
         subgraph "Services"
             ME[Matching Engine Service]
+            VEC[Vector Matching Service<br/>MiniLM-L6-v2]
             TP[Text Processor]
             CACHE[Match Cache<br/>LRU + TTL]
         end
@@ -34,13 +35,14 @@ graph TB
     end
 
     subgraph "Database"
-        DB[(Postgres Database<br/>database.db)]
+        DB[(PostgreSQL<br/>market_db)]
         PMT[polymarket_data table]
         KLT[kalshi_data table]
     end
 
     subgraph "AI Services"
-        CLAUDE[Claude Sonnet 4.5<br/>Anthropic API]
+        CLAUDE[Claude<br/>Anthropic API]
+        CONS[Consensus Service<br/>Claude + Gemini + ChatGPT<br/>optional]
     end
 
     PM -->|Real-time<br/>Market Data| PMI
@@ -61,10 +63,14 @@ graph TB
     RDB -->|Data| MC
     
     MC --> ME
-    ME -->|Tokenize| TP
+    ME -->|Normalize| TP
     ME -->|Check| CACHE
+    ME -->|Embed &<br/>pre-filter| VEC
+    VEC -->|Candidate pairs| ME
     ME -->|Match Request| CLAUDE
+    ME -->|Match Request| CONS
     CLAUDE -->|Matches +<br/>Confidence| ME
+    CONS -->|Voted matches| ME
     ME -->|Store| CACHE
     
     SERVER --> PMC
@@ -76,6 +82,8 @@ graph TB
     style PMI fill:#e1f5ff
     style KLI fill:#fff4e1
     style CLAUDE fill:#d4edda
+    style CONS fill:#d4edda
+    style VEC fill:#e7d4ed
     style DB fill:#f8d7da
     style CACHE fill:#d1ecf1
     style SERVER fill:#fff3cd
@@ -115,8 +123,8 @@ sequenceDiagram
         API->>DB: Query kalshi_data
         DB-->>API: Return records
         
-        API->>API: Text Processing<br/>& Tokenization
-        API->>API: Pre-filtering<br/>(70% reduction)
+        API->>API: Embed titles<br/>(MiniLM-L6-v2)
+        API->>API: Cosine similarity<br/>pre-filter (>= 0.75)
         
         API->>AI: Send filtered pairs<br/>+ similarity hints
         AI-->>API: Matched pairs<br/>+ confidence scores
@@ -174,17 +182,16 @@ flowchart TD
     
     FETCH --> CHECK_RECORDS{Records<br/>Available?}
     CHECK_RECORDS -->|No| EMPTY[Return Empty Result]
-    CHECK_RECORDS -->|Yes| NORMALIZE[Text Normalization]
+    CHECK_RECORDS -->|Yes| EMBED[Embed titles once per side<br/>MiniLM-L6-v2]
     
-    NORMALIZE --> TOKENIZE[Tokenization]
-    TOKENIZE --> SIMILARITY[Calculate Token Similarity]
-    SIMILARITY --> FILTER[Filter Pairs<br/>>30% similarity]
+    EMBED --> SIMILARITY[Calculate Cosine Similarity<br/>for every cross-platform pair]
+    SIMILARITY --> FILTER[Filter Pairs<br/>similarity >= 0.75]
     
     FILTER --> CHECK_FILTERED{Any Pairs<br/>Remaining?}
     CHECK_FILTERED -->|No| EMPTY
     CHECK_FILTERED -->|Yes| BATCH[Create Batches<br/>50 records each]
     
-    BATCH --> AI_PROCESS[Send to Claude AI<br/>with hints]
+    BATCH --> AI_PROCESS[Send to LLM layer<br/>single-agent or consensus<br/>with re-based hints]
     AI_PROCESS --> PARSE[Parse AI Response]
     PARSE --> VALIDATE[Validate Matches<br/>confidence >= 0.6]
     
@@ -232,7 +239,7 @@ graph TB
     end
     
     subgraph "Database"
-        DB[(database.db)]
+        DB[(PostgreSQL<br/>market_db)]
     end
     
     MAIN -->|spawn with<br/>execArgv| WORKER
@@ -297,38 +304,66 @@ stateDiagram-v2
 ```mermaid
 erDiagram
     POLYMARKET_DATA {
-        INTEGER id PK
-        TEXT ticker
+        SERIAL id PK
+        TEXT ticker UK
         TEXT source
-        REAL price
-        REAL volume
-        INTEGER timestamp
+        DECIMAL price
+        DECIMAL volume
+        BIGINT timestamp
         TEXT title
         TEXT outcome
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
     }
-    
+
     KALSHI_DATA {
-        INTEGER id PK
-        TEXT ticker
+        SERIAL id PK
+        TEXT ticker UK
         TEXT source
-        REAL price
-        REAL volume
-        INTEGER timestamp
+        DECIMAL price
+        DECIMAL volume
+        BIGINT timestamp
         TEXT title
         TEXT subtitle
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
     }
-    
-    POLYMARKET_DATA ||--o{ MARKET_MATCH : "matched_with"
-    KALSHI_DATA ||--o{ MARKET_MATCH : "matched_with"
-    
-    MARKET_MATCH {
+
+    MATCHED_EVENTS {
+        SERIAL id PK
         INTEGER polymarket_id FK
         INTEGER kalshi_id FK
-        TEXT similarity
-        REAL confidence
-        TEXT reasoning
+        TEXT common_title
+        TEXT match_category
+        DECIMAL match_confidence
+        TEXT poly_ticker
+        DECIMAL poly_price
+        DECIMAL poly_volume
+        TEXT kalshi_ticker
+        DECIMAL kalshi_price
+        DECIMAL kalshi_volume
+        DECIMAL price_spread "GENERATED"
+        DECIMAL total_combined_volume "GENERATED"
+        TIMESTAMP last_sync_at
+        BOOLEAN is_active
     }
+
+    PRICE_HISTORY {
+        SERIAL id PK
+        TEXT ticker
+        TEXT platform
+        DECIMAL price
+        DECIMAL volume
+        BIGINT timestamp
+        TIMESTAMP recorded_at
+    }
+
+    POLYMARKET_DATA ||--o{ MATCHED_EVENTS : "matched_with"
+    KALSHI_DATA ||--o{ MATCHED_EVENTS : "matched_with"
 ```
+
+`price_spread` and `total_combined_volume` are `GENERATED ALWAYS ... STORED`
+columns, so they are maintained by PostgreSQL and must not be written directly.
 
 ## Request Processing Pipeline
 

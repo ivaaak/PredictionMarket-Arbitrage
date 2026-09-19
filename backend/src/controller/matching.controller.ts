@@ -1,18 +1,10 @@
 import { Router } from 'express';
 import chalk from 'chalk';
-import { MatchingEngineService } from '../services/matching-engine.service';
+import { ANTHROPIC_API_KEY } from '../config';
+import { matchingEngine } from '../services/matching-engine.instance';
 import { MatchFilters } from '../types/matchFilters';
 
 const router = Router();
-
-// Get Anthropic API key from environment variable
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-
-if (!ANTHROPIC_API_KEY) {
-    console.warn(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Warning: ANTHROPIC_API_KEY not set in environment variables'));
-}
-
-const matchingEngine = new MatchingEngineService(ANTHROPIC_API_KEY);
 
 // Match markets with optional filters
 router.post('/match', async (req, res) => {
@@ -114,9 +106,9 @@ router.get('/match', async (req, res) => {
 });
 
 // Clear cache endpoint (useful for testing or forced refresh)
-router.post('/cache/clear', (req, res) => {
+router.post('/cache/clear', async (req, res) => {
     try {
-        matchingEngine.clearCache();
+        await matchingEngine.clearCache();
         res.json({
             success: true,
             message: 'Cache cleared successfully'

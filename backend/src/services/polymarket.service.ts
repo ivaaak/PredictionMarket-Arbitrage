@@ -1,13 +1,5 @@
-import { Pool } from 'pg';
-import * as dotenv from 'dotenv';
+import { pool } from '../database/pool';
 import { PolymarketDataRecord } from '../types/polymarketDataRecord';
-
-dotenv.config();
-
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
 
 export class PolymarketService {
     /**
@@ -108,7 +100,7 @@ export class PolymarketService {
         const client = await pool.connect();
         try {
             const result = await client.query(`SELECT COUNT(*) as count FROM polymarket_data`);
-            return parseInt(result.rows[0].count);
+            return Number(result.rows[0].count);
         } finally {
             client.release();
         }

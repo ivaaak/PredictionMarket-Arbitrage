@@ -2,27 +2,33 @@
 import { pipeline, FeatureExtractionPipeline } from '@xenova/transformers';
 import chalk from 'chalk';
 
-interface MarketCandidate {
-    ticker: string;
-    title: string;
-    embedding?: number[];
-}
-
 export class VectorMatchingService {
-    private static instance: VectorMatchingService;
+    // The in-flight (or settled) initialisation is memoised rather than the
+    // instance itself: caching the instance eagerly hands concurrent callers a
+    // service whose model has not finished loading, and a failed load would
+    // leave a permanently broken singleton behind.
+    private static initPromise: Promise<VectorMatchingService> | null = null;
+
     private extractor: FeatureExtractionPipeline | null = null;
-    
+
     // In-memory cache for embeddings to avoid re-computing (saves CPU)
     private embeddingCache: Map<string, number[]> = new Map();
 
     private constructor() {}
 
     public static async getInstance(): Promise<VectorMatchingService> {
-        if (!VectorMatchingService.instance) {
-            VectorMatchingService.instance = new VectorMatchingService();
-            await VectorMatchingService.instance.initialize();
+        if (!VectorMatchingService.initPromise) {
+            const service = new VectorMatchingService();
+            VectorMatchingService.initPromise = service
+                .initialize()
+                .then(() => service)
+                .catch((error) => {
+                    // Drop the memo so a later request can retry the download.
+                    VectorMatchingService.initPromise = null;
+                    throw error;
+                });
         }
-        return VectorMatchingService.instance;
+        return VectorMatchingService.initPromise;
     }
 
     private async initialize() {
@@ -52,6 +58,22 @@ export class VectorMatchingService {
         this.embeddingCache.set(text, embedding);
         
         return embedding;
+    }
+
+    /**
+     * Generate embeddings for a batch of texts.
+     *
+     * Duplicate texts are only embedded once, and the model calls are issued
+     * together rather than one-per-comparison, which keeps the pre-filter at
+     * O(n + m) embeddings instead of O(n * m) awaits.
+     */
+    public async getEmbeddings(texts: string[]): Promise<number[][]> {
+        const unique = Array.from(new Set(texts));
+        const missing = unique.filter(t => !this.embeddingCache.has(t));
+
+        await Promise.all(missing.map(t => this.getEmbedding(t)));
+
+        return texts.map(t => this.embeddingCache.get(t)!);
     }
 
     /**

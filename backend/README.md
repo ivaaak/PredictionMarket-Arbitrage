@@ -18,26 +18,34 @@ The Arbitrage Hunter platform uses a multi-threaded Node.js server, a PostgreSQL
 
 #### 2\. Environment Setup
 
-Create a file named `.env` in the project root and populate it with your configuration:
+Create a file named `.env` in this `backend/` directory (that is where the
+process loads it from) and populate it with your configuration. A ready-made
+template lives at `backend/.env.example`:
 
 ```bash
 # --- Server Config ---
 PORT=3000
+NODE_ENV=development
 
-# --- Database Config (Updated for PostgreSQL) ---
+# --- Database Config (PostgreSQL) ---
 # Replace with your actual Postgres credentials
 DATABASE_URL="postgres://user:password@localhost:5432/market_db"
 
+# --- Data ingestion ---
+ENABLE_INGESTOR=true             # false serves an already populated DB
+KALSHI_POLLING_INTERVAL_MS=5000
+
 # --- API Keys for LLM Matching ---
 ANTHROPIC_API_KEY="sk-ant-..."
-GEMINI_API_KEY="AIza..."         # Optional: for multi-agent consensus
-OPENAI_API_KEY="sk-..."         # Optional: for multi-agent consensus
+GEMINI_API_KEY="AIza..."         # Optional: BOTH this and OPENAI_API_KEY
+OPENAI_API_KEY="sk-..."          # are required to enable consensus mode
 
-# --- External API URLs (Defaults) ---
-# These are kept in src/config/index.ts but can be overridden here
-# POLYMARKET_WEBSOCKET_URL="wss://..."
-# KALSHI_WEBSOCKET_URL="wss://..."
+# --- Alerting (optional) ---
+DISCORD_WEBHOOK_URL=""
 ```
+
+> The external API URLs live in `src/config/index.ts` and are not read from the
+> environment.
 
 #### 3\. Database Setup (PostgreSQL)
 
@@ -48,17 +56,33 @@ Using Docker is the simplest way to run PostgreSQL locally:
 docker run --name market-postgres -e POSTGRES_USER=user -e POSTGRES_PASSWORD=password -e POSTGRES_DB=market_db -p 5432:5432 -d postgres
 ```
 
-The database initialization and table creation (`polymarket_data`, `kalshi_data`, `matched_events`, `price_history`) are handled automatically by the **Data Ingestor Worker Thread** upon startup, using the `DATABASE_URL`.
+Table creation (`polymarket_data`, `kalshi_data`, `matched_events`,
+`price_history`) runs automatically on server startup in `src/server.ts`, using
+`DATABASE_URL`. It does not depend on the ingestor worker, so the API still
+comes up correctly with `ENABLE_INGESTOR=false`.
 
 #### 4\. Installation and Run
 
 ```bash
-# Install dependencies, including the new 'pg' and '@xenova/transformers'
+# Install dependencies
 npm install
 
-# Build and run the application
+# Run the API with ts-node (no build step)
 npm start
+
+# ...or with reload on change
+npm run dev
+
+# Compile to dist/ and run the compiled output
+npm run build
+npm run start:prod
 ```
+
+Other scripts: `npm run typecheck` (tsc --noEmit) and `npm run lint` (eslint).
+
+On the first matching request the MiniLM-L6-v2 embedding model (~80MB) is
+downloaded and cached locally, so that request is noticeably slower than the
+rest.
 
 -----
 
@@ -82,7 +106,7 @@ The application is structured around a multi-threaded architecture to ensure the
 
 1.  **Request:** A user calls the `/api/matching/match` endpoint on the **Main Thread**.
 2.  **Fetch & Pre-filter:** The **Matching Engine Service** fetches the latest data from PostgreSQL.
-3.  **Semantic Match:** It delegates the pre-filtering to the **Vector Matching Service** which uses a locally loaded **MiniLM-L6-v2** model to generate embeddings and calculate **Cosine Similarity** between market titles. This quickly filters the data down to high-probability matches (e.g., similarity score $\geq 0.75$).
+3.  **Semantic Match:** It delegates the pre-filtering to the **Vector Matching Service**, which embeds each side once with a locally loaded **MiniLM-L6-v2** model and computes **Cosine Similarity** between market titles. Pairs scoring `>= 0.75` survive and are carried forward as hints.
 4.  **LLM/Consensus:** The reduced list of candidates is sent to the LLM agent(s) (Claude/Gemini/ChatGPT) for high-confidence, natural language verification and scoring.
 5.  **Output & Cache:** Results are returned to the user and cached in the **MatchCache** to avoid redundant LLM calls.
 
@@ -91,12 +115,16 @@ The application is structured around a multi-threaded architecture to ensure the
 ### 📂 File Structure Highlights
 
 | File Path | Description |
-| :--- | :--- | :--- |
-| `src/server.ts` | Main server entry point. Spawns the Ingestor Worker. |
-| `src/database/postgres.client.ts` | Handles all database connections and CRUD operations using the `pg` driver. |
-| `src/services/vector-matching.service.ts` |  Handles local vector embedding generation and cosine similarity calculation. |
-| `src/services/matching-engine.service.ts` | **Core logic.** Orchestrates matching, now using **VectorMatchingService** for pre-filtering and handling the necessary `async` operations. | 
-| `src/workers/data-ingestor.ts` | Worker thread logic for data streaming. Initializes and uses `PostgresClient`**. |
+| :--- | :--- |
+| `src/server.ts` | Entry point. Initializes the schema, spawns the Ingestor Worker, mounts routes. |
+| `src/config/index.ts` | Loads `.env` and exports every environment-derived setting. |
+| `src/database/pool.ts` | The single shared `pg` connection pool, plus numeric type parsers. |
+| `src/database/postgres.client.ts` | Schema creation and the ingestion upsert/history writes. |
+| `src/services/vector-matching.service.ts` | Local embedding generation and cosine similarity. |
+| `src/services/matching-engine.service.ts` | **Core logic.** Fetch, vector pre-filter, batch, LLM verify, cache. |
+| `src/services/consensus.service.ts` | Multi-agent voting across Claude, Gemini and ChatGPT. |
+| `src/services/matching-engine.instance.ts` | The shared engine instance used by every route. |
+| `src/workers/data-ingestor.ts` | Worker thread that runs both ingestors against `PostgresClient`. |
 
 -----
 
@@ -106,14 +134,32 @@ The primary endpoints are available on the **Main Thread** at `http://localhost:
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `POST` | `/api/matching/match` | Runs the full matching pipeline. Accepts filters in the request body (e.g., `polymarketTicker`, `limit`). |
-| `GET` | `/api/matching/arbitrage` | Returns matches with a price difference exceeding the minimum threshold (default 5%). |
-| `GET` | `/api/polymarket/latest/all` | Retrieves the latest Polymarket data for every unique ticker. |
-| `GET` | `/api/kalshi/latest/all` | Retrieves the latest Kalshi data for every unique ticker. |
+| `GET` | `/api/health` | Server liveness plus whether the ingestor worker is running. |
+| `POST` | `/api/matching/match` | Runs the full matching pipeline. Filters in the body (`polymarketTicker`, `kalshiTicker`, `startTimestamp`, `endTimestamp`, `limit`). |
+| `GET` | `/api/matching/match` | Same pipeline, filters as query parameters. |
+| `POST` | `/api/matching/arbitrage` | Matches whose price difference is at least `minPriceDifference` (default `0.05`). |
+| `POST` | `/api/matching/cache/clear` | Clears the match result cache and the embedding cache. |
+| `GET` | `/api/matching/health` | Matching subsystem health. |
+| `GET` | `/api/polymarket` | Paginated Polymarket rows (`limit`, `offset`). |
+| `GET` | `/api/polymarket/count` | Total Polymarket row count. |
+| `GET` | `/api/polymarket/latest/all` | Latest Polymarket row per unique ticker. |
+| `GET` | `/api/polymarket/timerange` | Rows between `start` and `end` unix timestamps. |
+| `GET` | `/api/polymarket/ticker/:ticker` | Rows for one ticker. |
+| `GET` | `/api/polymarket/:id` | One row by id. |
+| `GET` | `/api/kalshi/...` | Same six routes as `/api/polymarket`, over `kalshi_data`. |
+| `GET` | `/api/results/matched-events` | Stored matches (`limit`, `offset`, `activeOnly`). |
+| `POST` | `/api/results/matched-events` | Persists a match. Requires both ids, `common_title` and both tickers. |
+| `GET` | `/api/results/matched-events/by-tickers` | One stored match by `polymarketTicker` + `kalshiTicker`. |
+| `DELETE` | `/api/results/matched-events/:id` | Deletes a stored match. |
+
+All responses are shaped `{ success: boolean, ... }`; list endpoints add
+`count` and `data`.
 
 -----
 
 ### 💡 Future Improvements
 
+  * **Tests:** There is no test suite yet; `npm test` at the repository root
+    currently runs typecheck and lint only.
   * **Persistent Vector Cache:** Store the generated embeddings from the **Vector Matching Service** in a vector-enabled database (e.g., Postgres with `pgvector`) instead of in-memory.
   * **Vector Distance Search:** Replace the manual iteration and similarity check in `VectorMatchingService` with a native `pgvector` search query for faster, production-grade matching.

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+
+# Environment
+.env
+.env.local
+
+# Legacy SQLite artefacts (the project runs on PostgreSQL)
+*.db
+
+# Local model cache downloaded by @xenova/transformers
+.cache/

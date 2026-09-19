@@ -1,13 +1,5 @@
-import { Pool } from 'pg';
-import * as dotenv from 'dotenv';
+import { pool } from '../database/pool';
 import { KalshiDataRecord } from '../types/kalshiDataRecord';
-
-dotenv.config();
-
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
 
 export class KalshiService {
     /**
@@ -108,7 +100,7 @@ export class KalshiService {
         const client = await pool.connect();
         try {
             const result = await client.query(`SELECT COUNT(*) as count FROM kalshi_data`);
-            return parseInt(result.rows[0].count);
+            return Number(result.rows[0].count);
         } finally {
             client.release();
         }

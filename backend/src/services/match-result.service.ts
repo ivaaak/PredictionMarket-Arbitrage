@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { pool } from '../database/pool';
 
 export interface MatchedEvent {
     id: number;
@@ -25,13 +25,9 @@ export interface MatchedEvent {
     total_combined_volume?: number;
 
     is_active: boolean;
-    updated_at: string;
+    last_sync_at: string;
 }
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
 
 export class MatchedEventsModel {
     private static TABLE = 'matched_events';
@@ -94,7 +90,7 @@ export class MatchedEventsModel {
     /**
      * Creates a new match entry with snapshots
      */
-    static async create(event: Omit<MatchedEvent, 'id' | 'last_sync_at' | 'updated_at' | 'price_spread' | 'total_combined_volume'>): Promise<MatchedEvent> {
+    static async create(event: Omit<MatchedEvent, 'id' | 'last_sync_at' | 'price_spread' | 'total_combined_volume'>): Promise<MatchedEvent> {
         const client = await pool.connect();
         try {
             const result = await client.query(
@@ -142,8 +138,8 @@ export class MatchedEventsModel {
 
             if (fields.length === 0) return null;
 
-            // Force update the timestamp
-            fields.push(`updated_at = CURRENT_TIMESTAMP`);
+            // Force update the timestamp (the column is last_sync_at, not updated_at)
+            fields.push(`last_sync_at = CURRENT_TIMESTAMP`);
 
             values.push(id);
             const result = await client.query(

@@ -56,7 +56,11 @@ Each match includes:
 - `averageConfidence`: Mean confidence across voting models
 - Enhanced reasoning with consensus information
 
-### 4. Fallback Mechanism
+### 4. Vote Deduplication
+An agent that names the same pair more than once in a single response counts as
+one vote, so `consensusScore` stays within `0.0 - 1.0`.
+
+### 5. Fallback Mechanism
 If consensus matching fails:
 - Automatically falls back to single-agent (Claude) mode
 - Logs error for debugging
@@ -129,17 +133,20 @@ arbitrage.forEach(match => {
 });
 ```
 
-### Toggle Between Modes
+### Choosing a Mode
+
+The mode is fixed at construction time - there is no runtime toggle. Build a
+second engine if you need both:
 
 ```typescript
-// Switch to consensus mode
-engine.setConsensusMode(true);
-const consensusResult = await engine.matchMarkets();
-
-// Switch to single-agent mode
-engine.setConsensusMode(false);
-const singleResult = await engine.matchMarkets();
+const consensusEngine = new MatchingEngineService(anthropicKey, geminiKey, openaiKey, true);
+const singleEngine    = new MatchingEngineService(anthropicKey);
 ```
+
+In the running server the mode is decided by which keys are present in `.env`;
+`src/services/matching-engine.instance.ts` builds the one shared engine from
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY` and `OPENAI_API_KEY`. Consensus requires
+both optional keys - one alone falls back to single-agent.
 
 ### Filter by Ticker
 
@@ -152,10 +159,13 @@ const result = await engine.matchMarkets({
 
 ### Time Range Filtering
 
+`startTimestamp` and `endTimestamp` are unix timestamps in **seconds**, not ISO
+strings:
+
 ```typescript
 const result = await engine.matchMarkets({
-    startTimestamp: '2025-01-01T00:00:00Z',
-    endTimestamp: '2025-01-31T23:59:59Z'
+    startTimestamp: Math.floor(Date.parse('2025-01-01T00:00:00Z') / 1000),
+    endTimestamp: Math.floor(Date.parse('2025-01-31T23:59:59Z') / 1000)
 });
 ```
 
@@ -177,11 +187,13 @@ const result = await engine.matchMarkets({
 
 1. **Use caching**: Results are cached for 1 hour by default
 ```typescript
-// Clear cache when needed
-engine.clearCache();
+// Clear cache when needed (async: it also clears the embedding cache)
+await engine.clearCache();
 ```
 
-2. **Pre-filtering**: Tokenization reduces records sent to AI by ~60-80%
+2. **Pre-filtering**: Semantic vector similarity (MiniLM-L6-v2, cosine >= 0.75)
+   discards non-candidate pairs before any LLM call. How much it removes depends
+   entirely on how much the two exchanges' listings overlap.
 
 3. **Batch processing**: Automatically batches large datasets (50 records/batch)
 
@@ -271,33 +283,23 @@ private readonly CONSENSUS_THRESHOLD = 0.6; // 60% of agents must agree
    - Log failures for monitoring
    - Consider retry logic for transient failures
 
-## Cost Estimation
+## Cost and Performance
 
-Assuming $0.003 per 1K tokens (average across providers):
+> The figures below are rough order-of-magnitude estimates to help you reason
+> about the trade-off. They are **not** measurements taken from this codebase -
+> no benchmark suite exists yet. Consensus mode issues three provider calls per
+> batch instead of one, so expect roughly 3x the cost and to wait on the slowest
+> of the three providers rather than one.
 
-### Single Batch (50 markets)
-- **Single-agent**: ~$0.01 - $0.02
-- **Consensus**: ~$0.03 - $0.06
+| | Single-Agent | Consensus |
+| :--- | :--- | :--- |
+| Provider calls per batch | 1 | 3 (in parallel) |
+| Relative cost | 1x | ~3x |
+| Latency | one provider | the slowest of three |
+| Failure behaviour | request fails | falls back to single-agent |
 
-### Daily Processing (500 markets)
-- **Single-agent**: ~$0.10 - $0.20/day
-- **Consensus**: ~$0.30 - $0.60/day
-
-### Monthly Cost (500 markets/day)
-- **Single-agent**: ~$3 - $6/month
-- **Consensus**: ~$9 - $18/month
-
-## Benchmarks
-
-Based on testing with 100 market pairs:
-
-| Metric | Single-Agent | Consensus | Improvement |
-|--------|-------------|-----------|-------------|
-| Precision | 87% | 94% | +7% |
-| Recall | 82% | 89% | +7% |
-| F1 Score | 84.5% | 91.5% | +7% |
-| False Positives | 13% | 6% | -54% |
-| Processing Time | 1.2s | 3.8s | +217% |
+Caching matters more than either: identical filters hit the one-hour result
+cache and cost nothing.
 
 ## Troubleshooting
 
@@ -328,7 +330,7 @@ Based on testing with 100 market pairs:
 
 ## License
 
-MIT
+Apache-2.0 (see the repository root).
 
 ## Support
 

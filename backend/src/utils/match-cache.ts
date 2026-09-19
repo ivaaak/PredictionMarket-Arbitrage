@@ -184,21 +184,4 @@ export class MatchCache {
             newestEntryAge: newestTime ? now - newestTime : null
         };
     }
-
-    /**
-     * Invalidate cache entries matching specific criteria
-     */
-    invalidate(filters: Partial<MatchFilters>): number {
-        let invalidatedCount = 0;
-
-        this.cache.forEach((_, key) => {
-            // If filters match, invalidate
-            // This is a simple implementation; could be enhanced
-            this.cache.delete(key);
-            invalidatedCount++;
-        });
-
-        console.log(chalk.green.bold('[CACHE]'), chalk.yellow(`Invalidated ${invalidatedCount} entries`));
-        return invalidatedCount;
-    }
 }

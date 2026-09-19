@@ -1,17 +1,9 @@
 import { Router } from 'express';
 import chalk from 'chalk';
-import { MatchingEngineService } from '../services/matching-engine.service';
-import { MatchFilters } from '../types/matchFilters';
-import { MatchedEventsModel, MatchedEvent } from '../services/match-result.service';
+import { ANTHROPIC_API_KEY } from '../config';
+import { MatchedEventsModel } from '../services/match-result.service';
 
 const resultRoutes = Router();
-
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-if (!ANTHROPIC_API_KEY) {
-    console.warn(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Warning: ANTHROPIC_API_KEY not set'));
-}
-
-const matchingEngine = new MatchingEngineService(ANTHROPIC_API_KEY);
 
 // 1. Get all matched events (Updated for the new model)
 resultRoutes.get('/matched-events', async (req, res) => {
@@ -75,14 +67,32 @@ resultRoutes.post('/matched-events', async (req, res) => {
 
 
 resultRoutes.get('/matched-events/by-tickers', async (req, res) => {
-    const { polymarketTicker, kalshiTicker } = req.query;
-    const event = await MatchedEventsModel.getByTickers(polymarketTicker as string, kalshiTicker as string);
-    res.json({ success: true, data: event });
+    try {
+        const { polymarketTicker, kalshiTicker } = req.query;
+        if (!polymarketTicker || !kalshiTicker) {
+            return res.status(400).json({
+                success: false,
+                error: 'Both polymarketTicker and kalshiTicker query parameters are required.'
+            });
+        }
+        const event = await MatchedEventsModel.getByTickers(polymarketTicker as string, kalshiTicker as string);
+        res.json({ success: true, data: event });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    }
 });
 
 resultRoutes.delete('/matched-events/:id', async (req, res) => {
-    const deleted = await MatchedEventsModel.delete(parseInt(req.params.id));
-    res.json({ success: true, deleted });
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) {
+            return res.status(400).json({ success: false, error: 'Invalid id.' });
+        }
+        const deleted = await MatchedEventsModel.delete(id);
+        res.status(deleted ? 200 : 404).json({ success: deleted, deleted });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    }
 });
 
 resultRoutes.get('/health', (req, res) => {

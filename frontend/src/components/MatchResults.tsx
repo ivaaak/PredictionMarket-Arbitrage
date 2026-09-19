@@ -28,6 +28,7 @@ export function MatchResults({ matches }: MatchResultsProps) {
     const [dbMatches, setDbMatches] = useState<MatchedEvent[]>([]);
     const [loading, setLoading] = useState(false);
     const [showDbMatches, setShowDbMatches] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
 
     useEffect(() => {
         if (showDbMatches) {
@@ -38,13 +39,16 @@ export function MatchResults({ matches }: MatchResultsProps) {
     const fetchDbMatches = async () => {
         try {
             setLoading(true);
+            setSaveError(null);
             const response = await fetch('/api/results/matched-events');
             const result = await response.json();
             if (result.success) {
                 setDbMatches(result.data);
+            } else {
+                setSaveError(result.error || 'Failed to load matched events.');
             }
         } catch (error) {
-            console.error('Error fetching matched events:', error);
+            setSaveError(error instanceof Error ? error.message : String(error));
         } finally {
             setLoading(false);
         }
@@ -55,8 +59,10 @@ export function MatchResults({ matches }: MatchResultsProps) {
             const payload = {
                 polymarket_id: match.polymarketRecord.id,
                 kalshi_id: match.kalshiRecord.id,
-                common_title: match.polymarketRecord.title,
-                match_category: match.polymarketRecord || 'general',
+                // common_title is NOT NULL on the server, and title is optional
+                // on the record, so fall back to the ticker.
+                common_title: match.polymarketRecord.title || match.polymarketRecord.ticker,
+                match_category: 'general',
                 match_confidence: match.confidence,
                 poly_ticker: match.polymarketRecord.ticker,
                 poly_price: match.polymarketRecord.price,
@@ -67,7 +73,7 @@ export function MatchResults({ matches }: MatchResultsProps) {
                 is_active: true
             };
 
-            const response = await fetch('/api/matching/matched-events', {
+            const response = await fetch('/api/results/matched-events', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -75,11 +81,13 @@ export function MatchResults({ matches }: MatchResultsProps) {
 
             const result = await response.json();
             if (result.success) {
-                alert('Match stored in database!');
+                setSaveError(null);
                 if (showDbMatches) fetchDbMatches();
+            } else {
+                setSaveError(result.error || 'Failed to save match.');
             }
         } catch (error) {
-            console.error('Error saving match:', error);
+            setSaveError(error instanceof Error ? error.message : String(error));
         }
     };
 
@@ -117,6 +125,9 @@ export function MatchResults({ matches }: MatchResultsProps) {
                     </button>
                 </div>
             </div>
+
+            {loading && <div className={styles.notice}>Loading stored matches...</div>}
+            {saveError && <div className={styles.error}>{saveError}</div>}
 
             <div className={styles.tableWrapper}>
                 <table className={styles.arbTable}>

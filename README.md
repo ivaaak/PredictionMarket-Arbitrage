@@ -13,13 +13,13 @@ This system continuously ingests market data from two major prediction market pl
 
 It stores the data in a **PostgreSQL database**, uses a local **Vector Matching Service** for efficient pre-filtering, and employs a **Multi-Agent LLM Consensus** (Claude, Gemini, OpenAI) to confirm high-confidence market matches and identify arbitrage opportunities.
 
-## Screenshots:
+## Screenshots
 
-<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/1.png?token=GHSAT0AAAAAADTOJOIUX5J5BNVYBUQ4L7AO2LP5Y7A" width="80%"></img> 
+<img src="docs/1.png" width="80%" alt="Arbitrage opportunities view" />
 
-<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/2.png?token=GHSAT0AAAAAADTOJOIUAOAB7M3KSBQMOUMG2LP5YZA" width="80%"></img> 
+<img src="docs/2.png" width="80%" alt="Market feed view" />
 
-<img src="https://raw.githubusercontent.com/ivaaak/PredictionMarket-Arbitrage/refs/heads/main/docs/3.png?token=GHSAT0AAAAAADTOJOIVIWRJ3ADPOGD5WJPI2LP5WRQ" width="80%"></img> 
+<img src="docs/3.png" width="80%" alt="Matching panel and filters" />
 
 
 ## 🏗️ System Architecture
@@ -170,14 +170,19 @@ graph TD
 ### 2. Data Ingestor Worker Thread
 
 * **Purpose:** Continuously fetch market data and persist to PostgreSQL.
-* **Files:** `src/workers/data-ingestor.ts`, `src/api-clients/polymarket.ingestor.ts`.
+* **Files:** `src/workers/data-ingestor.ts`, `src/api-clients/polymarket.ingestor.ts`,
+  `src/api-clients/kalshi-polling.ingestor.ts`.
+* Spawned by `src/server.ts` at boot unless `ENABLE_INGESTOR=false`.
 
 ### 3. Matching Engine
 
 * **Vector Embedding:** Converts market titles/tickers to vectors using **MiniLM-L6-v2**.
 * **Vector Pre-filtering:** Calculates **Cosine Similarity** (threshold) to filter matches.
-* **Multi-Agent Consensus:** Parallel calls to **Claude, Gemini, and OpenAI** for final semantic scoring.
-* **Files:** `src/services/matching-engine.service.ts`, `src/services/vector-matching.service.ts`.
+* **Multi-Agent Consensus:** Parallel calls to **Claude, Gemini, and OpenAI** for
+  final semantic scoring. Enabled only when `GEMINI_API_KEY` and `OPENAI_API_KEY`
+  are both set; otherwise the engine runs single-agent (Claude only).
+* **Files:** `src/services/matching-engine.service.ts`, `src/services/vector-matching.service.ts`,
+  `src/services/consensus.service.ts`.
 
 
 ## 🔧 Technology Stack
@@ -190,37 +195,104 @@ graph TD
 
 ## 🚀 Getting Started
 
-1. **PostgreSQL**
+**Prerequisites:** Node.js 18+, a running PostgreSQL instance, and an Anthropic API key.
+
+### 1. Start PostgreSQL
+
 ```bash
-docker run --name market_db -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=admin -e POSTGRES_DB=market_db -p 5432:5432 -d postgres
-
+docker run --name market_db \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=admin -e POSTGRES_DB=market_db \
+  -p 5432:5432 -d postgres
 ```
 
-2. **Configure Environment**
-Create a `.env` file:
+### 2. Configure the backend environment
+
+The backend reads its `.env` from the `backend/` directory. Copy the template
+and fill it in:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
 ```env
-ANTHROPIC_API_KEY=your_key
+PORT=3000
 DATABASE_URL="postgres://postgres:admin@localhost:5432/market_db"
+
+# Single-agent matching needs only this key.
+ANTHROPIC_API_KEY=your_key
+
+# Add BOTH of these to enable multi-agent consensus (optional).
+GEMINI_API_KEY=your_key
+OPENAI_API_KEY=your_key
+
+# Set to false to serve an already populated database without ingesting.
+ENABLE_INGESTOR=true
 ```
 
-4. **Run System**
+### 3. Install and run
+
+From the repository root, this installs both workspaces and runs the API and the
+UI together:
+
 ```bash
 npm install
-npm run dev
+npm start
+```
+
+* API: `http://localhost:3000` (health check at `/api/health`)
+* UI: `http://localhost:5173` (proxies `/api` to the backend)
+
+Tables are created automatically on first boot. On the first matching request
+the MiniLM embedding model (~80MB) is downloaded and cached locally.
+
+To run a workspace on its own:
+
+```bash
+cd backend  && npm run dev    # API with reload
+cd frontend && npm run dev    # Vite dev server
+```
+
+### Checks
+
+```bash
+npm test          # typecheck + lint across both workspaces
+npm run build     # compile backend to dist/ and build the UI
 ```
 
 ## 🧠 Matching Algorithm
 
-1. **Phase 1: Embedding** – Generate vectors for all active market titles.
-2. **Phase 2: Pre-filtering** – Calculate Cosine Similarity between platform pairs.
-3. **Phase 3: Consensus** – High-probability pairs are verified by multiple LLMs.
-4. **Phase 4: Scoring** – Average confidence scores are generated and cached.
+1. **Embedding** – Every market title (falling back to the ticker) is embedded
+   once per side with MiniLM-L6-v2.
+2. **Pre-filtering** – Cosine similarity is computed for every cross-platform
+   pair; only pairs scoring `>= 0.75` survive, and the surviving pairs are
+   passed on as hints.
+3. **Verification** – Survivors are batched (50 Polymarket records per batch)
+   and sent to the LLM layer. With all three keys configured this is the
+   multi-agent consensus path; with only `ANTHROPIC_API_KEY` it is Claude alone.
+   Consensus failures fall back to the single-agent path.
+4. **Scoring** – Matches below `0.6` confidence are dropped, duplicates are
+   removed, results are sorted by confidence and cached for one hour.
 
 
 ## 💰 Arbitrage Detection
 
-Arbitrage is flagged when:
+`POST /api/matching/arbitrage` runs the full matching pipeline and then keeps
+only the pairs whose absolute price difference is at least
+`minPriceDifference` (default `0.05`), sorted widest spread first. Each
+opportunity is returned with its price difference, potential profit percentage,
+average volume, and a liquidity score (the smaller of the two volumes).
 
-1. **Consensus Confidence** as specified in the UI.
-2. **Price Difference** as specified in the UI.
-3. **Liquidity** meets minimum requirements.
+Confidence filtering happens earlier in the pipeline: matches below `0.6`
+confidence are discarded before they can become opportunities.
+
+## 📁 Repository Layout
+
+```
+backend/    Express API, ingestor worker, matching engine  (see backend/README.md)
+frontend/   React + TypeScript + Vite UI                   (see frontend/README.md)
+docs/       Architecture diagrams and screenshots          (see docs/architecture.md)
+```
+
+## 📄 License
+
+Apache-2.0
