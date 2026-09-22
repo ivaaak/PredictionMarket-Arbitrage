@@ -7,7 +7,7 @@ import { IngestionSource, IngestionStatus, IngestorCommand, IngestorEvent } from
 const TAG = chalk.blue.bold('[INGESTION]');
 
 const idle = (intervalMs: number) => ({
-    running: false, intervalMs, sweeps: 0, lastSweepAt: null, lastSweepCount: null, lastError: null, lastErrorAt: null
+    running: false, intervalMs, sweeps: 0, lastSweepAt: null, lastSweepCount: null, lastRejected: null, lastRejectedByReason: null, lastPruned: null, lastError: null, lastErrorAt: null
 });
 
 /**

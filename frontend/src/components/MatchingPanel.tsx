@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import styles from './MatchingPanel.module.css';
-import { MatchFilters, MarketMatch, MarketSearchHit } from '../types';
+import { MatchFilters, MarketMatch, MarketSearchHit, TraceEvent } from '../types';
 import { MarketPicker } from './MarketPicker';
 
 interface MatchingPanelProps {
     onMatchStart: () => void;
     onMatchComplete: (matches: MarketMatch[]) => void;
+    /** Each progress event of the run, as the backend streams it. */
+    onTrace: (event: TraceEvent) => void;
     isMatching: boolean;
 }
 
-export function MatchingPanel({ onMatchStart, onMatchComplete, isMatching }: MatchingPanelProps) {
+export function MatchingPanel({ onMatchStart, onMatchComplete, onTrace, isMatching }: MatchingPanelProps) {
     const [filters, setFilters] = useState<MatchFilters>({
         limit: 50
     });
@@ -29,19 +31,38 @@ export function MatchingPanel({ onMatchStart, onMatchComplete, isMatching }: Mat
         onMatchStart();
 
         try {
-            const response = await fetch('/api/matching/match', {
+            const response = await fetch('/api/matching/match/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
+            if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
 
-            const result = await response.json();
-
-            if (result.success) {
-                onMatchComplete(result.matches);
-                return result.matches;
+            // Newline-delimited JSON: trace events while the run works, then
+            // one final 'result' or 'error' line.
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let final: TraceEvent | null = null;
+            for (;;) {
+                const { done, value } = await reader.read();
+                buffer += decoder.decode(value, { stream: !done });
+                const lines = buffer.split('\n');
+                buffer = done ? '' : lines.pop() ?? '';
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    const event = JSON.parse(line) as TraceEvent;
+                    onTrace(event);
+                    if (event.type === 'result' || event.type === 'error') final = event;
+                }
+                if (done) break;
             }
-            setError(result.error);
+
+            if (final?.type === 'result') {
+                onMatchComplete(final.matches);
+                return final.matches;
+            }
+            setError(final?.type === 'error' ? final.error : 'Stream ended without a result');
             onMatchComplete([]);
         } catch (err) {
             setError(String(err));

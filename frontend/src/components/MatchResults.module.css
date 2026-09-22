@@ -1,5 +1,16 @@
+.stack {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+}
+
+.stack > .container,
+.stack > .emptyState {
+    flex: 1;
+}
+
 .container {
-    height: 100%;
+    min-height: 420px;
     display: flex;
     flex-direction: column;
     background: var(--bg-panel);
@@ -12,8 +23,7 @@
     align-items: center;
     justify-content: center;
     gap: 0.25rem;
-    height: 100%;
-    min-height: 50vh;
+    min-height: 280px;
     color: var(--text-secondary);
     background: var(--bg-panel);
     border: 1px solid var(--border-color);

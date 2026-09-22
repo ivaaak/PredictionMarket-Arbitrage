@@ -14,7 +14,7 @@
 // no LLM calls and never serve stale prices.
 import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
-import { DEFAULT_MATCH_LIMIT } from '../config';
+import { CLAUDE_MODEL, DEFAULT_MATCH_LIMIT } from '../config';
 import { PolymarketService } from './polymarket.service';
 import { KalshiService } from './kalshi.service';
 import { callClaude, ConsensusService } from './consensus.service';
@@ -28,6 +28,7 @@ import { MarketMatch } from '../types/marketMatch';
 import { MatchFilters } from '../types/matchFilters';
 import { MatchingResult } from '../types/matchingResult';
 import { AgentMatch } from '../types/consensus.types';
+import { TraceListener } from '../types/matching-trace';
 
 const LOG = chalk.blue.bold('[MATCHING-ENGINE]');
 
@@ -163,11 +164,30 @@ export class MatchingEngineService {
         return batches;
     }
 
-    private async judgeBatch(batch: MatchBatch): Promise<AgentMatch[]> {
+    private async judgeBatch(batch: MatchBatch, batchNumber: number, onTrace?: TraceListener): Promise<AgentMatch[]> {
         if (this.consensusService) {
-            return this.consensusService.getConsensusMatches(batch);
+            return this.consensusService.getConsensusMatches(batch, batchNumber, onTrace);
         }
-        return callClaude(this.anthropic, batch);
+        onTrace?.({ type: 'agent', batch: batchNumber, agent: 'claude', status: 'start' });
+        const start = Date.now();
+        try {
+            const matches = await callClaude(this.anthropic, batch);
+            onTrace?.({ type: 'agent', batch: batchNumber, agent: 'claude', status: 'done', ms: Date.now() - start, proposed: matches.length });
+            return matches;
+        } catch (error) {
+            onTrace?.({ type: 'agent', batch: batchNumber, agent: 'claude', status: 'failed', error: error instanceof Error ? error.message : String(error) });
+            throw error;
+        }
+    }
+
+    private traceConfig(pinned: boolean, onTrace?: TraceListener) {
+        if (!onTrace) return;
+        onTrace({
+            type: 'config',
+            mode: pinned ? 'pinned' : this.consensusService ? 'consensus' : 'single',
+            agents: this.consensusService ? ConsensusService.AGENTS : [{ id: 'claude', model: CLAUDE_MODEL }],
+            consensusThreshold: this.consensusService ? this.consensusService.CONSENSUS_THRESHOLD : null
+        });
     }
 
     /**
@@ -176,7 +196,7 @@ export class MatchingEngineService {
      * verdicts, so its pairs are retried on the next run instead of being
      * recorded as non-matches.
      */
-    private async judgePairs(batches: MatchBatch[]): Promise<MatchVerdict[]> {
+    private async judgePairs(batches: MatchBatch[], onTrace?: TraceListener): Promise<MatchVerdict[]> {
         const verdicts: MatchVerdict[] = [];
         let next = 0;
 
@@ -185,14 +205,24 @@ export class MatchingEngineService {
                 const batchNumber = next++;
                 const batch = batches[batchNumber];
                 console.log(LOG, chalk.magenta(`Judging batch ${batchNumber + 1}/${batches.length}`));
+                const batchInfo = {
+                    batch: batchNumber,
+                    total: batches.length,
+                    polyMarkets: batch.polymarket.length,
+                    pairs: Array.from(batch.candidates.values()).reduce((n, ks) => n + ks.length, 0)
+                };
+                onTrace?.({ type: 'batch', status: 'start', ...batchInfo });
 
                 let matches: AgentMatch[];
                 try {
-                    matches = await this.judgeBatch(batch);
+                    matches = await this.judgeBatch(batch, batchNumber, onTrace);
                 } catch (error) {
-                    console.error(LOG, chalk.red(`Batch ${batchNumber + 1} failed, will retry next run:`), error instanceof Error ? error.message : error);
+                    const message = error instanceof Error ? error.message : String(error);
+                    console.error(LOG, chalk.red(`Batch ${batchNumber + 1} failed, will retry next run:`), message);
+                    onTrace?.({ type: 'batch', status: 'failed', error: message, ...batchInfo });
                     continue;
                 }
+                onTrace?.({ type: 'batch', status: 'done', accepted: matches.length, ...batchInfo });
 
                 const found = new Map(matches.map(m => [`${m.polymarketIndex}:${m.kalshiIndex}`, m]));
                 batch.candidates.forEach((ks, p) => {
@@ -223,10 +253,19 @@ export class MatchingEngineService {
             : m.reasoning;
     }
 
-    async matchMarkets(filters: MatchFilters = {}): Promise<MatchingResult> {
+    async matchMarkets(filters: MatchFilters = {}, onTrace?: TraceListener): Promise<MatchingResult> {
         console.log(LOG, chalk.cyan('Starting market matching with filters:'), filters);
 
+        // A manually chosen pair is always judged, whatever its vector similarity.
+        const pinnedPair = !!(filters.polymarketTicker && filters.kalshiTicker);
+        this.traceConfig(pinnedPair, onTrace);
+
+        onTrace?.({ type: 'stage', stage: 'fetch', status: 'start', detail: 'Loading open markets from Postgres' });
         const { polymarketRecords, kalshiRecords } = await this.fetchRecords(filters);
+        onTrace?.({
+            type: 'stage', stage: 'fetch', status: 'done',
+            stats: { polymarket: polymarketRecords.length, kalshi: kalshiRecords.length }
+        });
         const empty: MatchingResult = {
             matches: [],
             totalPolymarketRecords: polymarketRecords.length,
@@ -235,13 +274,26 @@ export class MatchingEngineService {
             candidatePairs: 0,
             newlyJudgedPairs: 0
         };
-        if (polymarketRecords.length === 0 || kalshiRecords.length === 0) return empty;
+        if (polymarketRecords.length === 0 || kalshiRecords.length === 0) {
+            for (const stage of ['embed', 'cache', 'judge', 'price'] as const) {
+                onTrace?.({ type: 'stage', stage, status: 'skipped', detail: 'No markets on one side to pair' });
+            }
+            return empty;
+        }
 
-        // A manually chosen pair is always judged, whatever its vector similarity.
-        const pinnedPair = !!(filters.polymarketTicker && filters.kalshiTicker);
-        const candidates = pinnedPair
-            ? new Map(polymarketRecords.map((_, p) => [p, kalshiRecords.map((_, k) => k)]))
-            : await this.findCandidates(polymarketRecords, kalshiRecords);
+        let candidates: Map<number, number[]>;
+        if (pinnedPair) {
+            onTrace?.({ type: 'stage', stage: 'embed', status: 'skipped', detail: 'Pair chosen manually; similarity filter bypassed' });
+            candidates = new Map(polymarketRecords.map((_, p) => [p, kalshiRecords.map((_, k) => k)]));
+        } else {
+            onTrace?.({
+                type: 'stage', stage: 'embed', status: 'start',
+                detail: `Embedding ${polymarketRecords.length + kalshiRecords.length} titles, top ${this.CANDIDATES_PER_MARKET} neighbours >= ${this.MIN_VECTOR_SIMILARITY}`
+            });
+            candidates = await this.findCandidates(polymarketRecords, kalshiRecords);
+        }
+
+        onTrace?.({ type: 'stage', stage: 'cache', status: 'start', detail: 'Looking up stored LLM verdicts' });
         const verdicts = await MatchVerdictStore.getForPolymarketTickers(polymarketRecords.map(r => r.ticker));
 
         const unjudged = new Map<number, number[]>();
@@ -252,15 +304,40 @@ export class MatchingEngineService {
             if (pending.length > 0) unjudged.set(p, pending);
         });
 
-        console.log(LOG, chalk.gray(`${candidatePairs} candidate pairs, ${candidatePairs - Array.from(unjudged.values()).reduce((n, ks) => n + ks.length, 0)} already judged`));
+        const unjudgedPairs = Array.from(unjudged.values()).reduce((n, ks) => n + ks.length, 0);
+        console.log(LOG, chalk.gray(`${candidatePairs} candidate pairs, ${candidatePairs - unjudgedPairs} already judged`));
+        if (!pinnedPair) {
+            onTrace?.({
+                type: 'stage', stage: 'embed', status: 'done',
+                stats: { candidatePairs, polyWithCandidates: candidates.size }
+            });
+        }
+        onTrace?.({
+            type: 'stage', stage: 'cache', status: 'done',
+            stats: { reused: candidatePairs - unjudgedPairs, toJudge: unjudgedPairs }
+        });
 
         let newlyJudgedPairs = 0;
         if (unjudged.size > 0) {
-            const fresh = await this.judgePairs(this.buildBatches(polymarketRecords, kalshiRecords, unjudged));
+            const batches = this.buildBatches(polymarketRecords, kalshiRecords, unjudged);
+            onTrace?.({
+                type: 'stage', stage: 'judge', status: 'start',
+                detail: `${batches.length} batch(es), up to ${this.MAX_CONCURRENT_BATCHES} in parallel`,
+                stats: { batches: batches.length, pairs: unjudgedPairs }
+            });
+            const fresh = await this.judgePairs(batches, onTrace);
             await MatchVerdictStore.saveMany(fresh);
             fresh.forEach(v => verdicts.set(pairKey(v.polyTicker, v.kalshiTicker), v));
             newlyJudgedPairs = fresh.length;
+            onTrace?.({
+                type: 'stage', stage: 'judge', status: 'done',
+                stats: { judged: fresh.length, matched: fresh.filter(v => v.isMatch).length }
+            });
+        } else {
+            onTrace?.({ type: 'stage', stage: 'judge', status: 'skipped', detail: 'Every candidate pair already has a stored verdict' });
         }
+
+        onTrace?.({ type: 'stage', stage: 'price', status: 'start', detail: 'Pricing hedges from current order books' });
 
         // Any positive verdict whose two markets are in this run counts, even
         // if the pair was not among this run's vector candidates.
@@ -286,6 +363,14 @@ export class MatchingEngineService {
         });
 
         matches.sort((a, b) => b.confidence - a.confidence);
+        onTrace?.({
+            type: 'stage', stage: 'price', status: 'done',
+            stats: {
+                matches: matches.length,
+                priced: matches.filter(m => m.arbitrage).length,
+                profitable: matches.filter(m => m.arbitrage && m.arbitrage.netEdge > 0).length
+            }
+        });
 
         return {
             ...empty,

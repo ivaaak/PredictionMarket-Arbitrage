@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { CLAUDE_MODEL, GEMINI_MODEL, OPENAI_MODEL } from '../config';
 import { AgentMatch, AgentResponse, ConsensusMatch } from '../types/consensus.types';
 import { buildMatchPrompt, MatchBatch, parseMatchResponse } from './match-prompt';
+import { TraceListener } from '../types/matching-trace';
 
 const MAX_OUTPUT_TOKENS = 4000;
 
@@ -26,7 +27,13 @@ export class ConsensusService {
     private anthropic: Anthropic;
     private gemini: GoogleGenerativeAI;
     private openai: OpenAI;
-    private readonly CONSENSUS_THRESHOLD = 0.6; // 60% of agents must agree
+    readonly CONSENSUS_THRESHOLD = 0.6; // 60% of agents must agree
+
+    static readonly AGENTS = [
+        { id: 'claude', model: CLAUDE_MODEL },
+        { id: 'gemini', model: GEMINI_MODEL },
+        { id: 'chatgpt', model: OPENAI_MODEL }
+    ];
 
     constructor(
         anthropicKey: string,
@@ -41,7 +48,7 @@ export class ConsensusService {
     /**
      * Get consensus matches from all AI agents
      */
-    async getConsensusMatches(batch: MatchBatch): Promise<ConsensusMatch[]> {
+    async getConsensusMatches(batch: MatchBatch, batchNumber = 0, onTrace?: TraceListener): Promise<ConsensusMatch[]> {
         console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.cyan('Starting multi-agent consensus matching...'));
 
         const agents: [string, () => Promise<AgentMatch[]>][] = [
@@ -50,7 +57,17 @@ export class ConsensusService {
             ['chatgpt', () => this.callChatGPT(batch)]
         ];
 
-        const settled = await Promise.allSettled(agents.map(([, call]) => this.timed(call)));
+        const settled = await Promise.allSettled(agents.map(async ([agent, call]) => {
+            onTrace?.({ type: 'agent', batch: batchNumber, agent, status: 'start' });
+            try {
+                const result = await this.timed(call);
+                onTrace?.({ type: 'agent', batch: batchNumber, agent, status: 'done', ms: result.responseTime, proposed: result.matches.length });
+                return result;
+            } catch (error) {
+                onTrace?.({ type: 'agent', batch: batchNumber, agent, status: 'failed', error: error instanceof Error ? error.message : String(error) });
+                throw error;
+            }
+        }));
 
         const agentResponses: AgentResponse[] = [];
         settled.forEach((result, i) => {
@@ -68,6 +85,15 @@ export class ConsensusService {
         }
 
         const consensusMatches = this.buildConsensus(agentResponses);
+        onTrace?.({
+            type: 'consensus',
+            batch: batchNumber,
+            responded: agentResponses.map(r => r.agent),
+            requiredVotes: Math.ceil(agentResponses.length * this.CONSENSUS_THRESHOLD),
+            accepted: consensusMatches.length,
+            proposedPairs: new Set(agentResponses.flatMap(r => r.matches.map(m => `${m.polymarketIndex}:${m.kalshiIndex}:${m.direction}`))).size,
+            votes: Object.fromEntries(agentResponses.map(r => [r.agent, r.matches.length]))
+        });
         console.log(chalk.magenta.bold('[CONSENSUS]'), chalk.green(`Generated ${consensusMatches.length} consensus matches from ${agentResponses.length} agents`));
         return consensusMatches;
     }

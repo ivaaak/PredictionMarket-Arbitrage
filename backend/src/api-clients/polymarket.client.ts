@@ -11,6 +11,8 @@
 import chalk from 'chalk';
 import { POLYMARKET_GAMMA_API_BASE } from '../config';
 import { MarketData } from '../database/postgres.client';
+import { SweepBatch } from '../types/ingestion';
+import { QualityTally } from './market-quality';
 
 // Gamma encodes array fields as JSON strings and numeric fields inconsistently
 // (some as numbers, some as strings), so everything is parsed defensively.
@@ -25,6 +27,8 @@ interface GammaMarket {
     lastTradePrice?: number | string;
     volumeNum?: number | string;
     volume?: number | string;
+    liquidityNum?: number | string;
+    liquidity?: number | string;
     endDate?: string;
     enableOrderBook?: boolean;
     acceptingOrders?: boolean;
@@ -130,7 +134,7 @@ export class PolymarketPollingClient {
     private isPollInFlight = false;
 
     constructor(
-        private readonly onBatch: (markets: MarketData[]) => Promise<void>,
+        private readonly onBatch: (sweep: SweepBatch) => Promise<void>,
         private readonly intervalMs: number,
         private readonly maxPages: number,
         private readonly onError?: (message: string) => void
@@ -167,25 +171,32 @@ export class PolymarketPollingClient {
         return Array.isArray(data) ? data : [];
     }
 
-    private async fetchAllMarkets(): Promise<MarketData[]> {
-        const now = Math.floor(Date.now() / 1000);
+    private async fetchAllMarkets(): Promise<SweepBatch> {
+        const nowMs = Date.now();
+        const now = Math.floor(nowMs / 1000);
         const markets: MarketData[] = [];
         const seen = new Set<string>();
+        const tally = new QualityTally();
+        let complete = false;
 
         let offset = 0;
         for (let page = 0; page < this.maxPages; page++) {
             const rows = await this.fetchPage(offset);
             // Stop on an empty page rather than a short one: the server's page
             // cap is not ours to assume.
-            if (rows.length === 0) break;
+            if (rows.length === 0) {
+                complete = true;
+                break;
+            }
             offset += rows.length;
 
             for (const row of rows) {
                 if (row.closed || row.enableOrderBook === false || row.acceptingOrders === false) continue;
                 const mapped = toMarketData(row, now);
                 // Offset pagination over a live, re-sorting list can repeat rows.
-                if (mapped && !seen.has(mapped.ticker)) {
-                    seen.add(mapped.ticker);
+                if (!mapped || seen.has(mapped.ticker)) continue;
+                seen.add(mapped.ticker);
+                if (tally.admit(mapped, { liquidity: num(row.liquidityNum) ?? num(row.liquidity) }, nowMs)) {
                     markets.push(mapped);
                 }
             }
@@ -193,7 +204,8 @@ export class PolymarketPollingClient {
             await sleep(PAGE_DELAY_MS);
         }
 
-        return markets;
+        console.log(chalk.blue.bold('[POLYMARKET]'), chalk.gray(`Quality filter: ${tally.describe()}${complete ? '' : ' (stopped at page cap)'}`));
+        return { markets, rejected: tally.rejected as Record<string, number>, complete };
     }
 
     private async poll() {
@@ -204,9 +216,9 @@ export class PolymarketPollingClient {
         this.isPollInFlight = true;
 
         try {
-            const markets = await this.fetchAllMarkets();
-            console.log(chalk.blue.bold('[POLYMARKET]'), chalk.green(`Fetched ${markets.length} open binary markets`));
-            await this.onBatch(markets);
+            const sweep = await this.fetchAllMarkets();
+            console.log(chalk.blue.bold('[POLYMARKET]'), chalk.green(`Fetched ${sweep.markets.length} tradable open binary markets`));
+            await this.onBatch(sweep);
         } catch (error) {
             console.error(chalk.blue.bold('[POLYMARKET]'), chalk.red('Poll failed:'), describeFetchError(error));
             this.onError?.(describeFetchError(error));

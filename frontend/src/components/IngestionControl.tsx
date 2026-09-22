@@ -79,9 +79,18 @@ export function IngestionControl() {
                             </div>
                             <div className={styles.meta}>
                                 {s
-                                    ? `Sweep ${ago(s.lastSweepAt)} · ${s.lastSweepCount?.toLocaleString() ?? '—'} mkts · every ${Math.round(s.intervalMs / 1000)}s`
+                                    ? `Sweep ${ago(s.lastSweepAt)} · ${s.lastSweepCount?.toLocaleString() ?? '—'} kept · every ${Math.round(s.intervalMs / 1000)}s`
                                     : 'Status unknown'}
                             </div>
+                            {s?.lastRejected != null && (
+                                <div
+                                    className={styles.meta}
+                                    title={Object.entries(s.lastRejectedByReason ?? {}).map(([r, n]) => `${r.replace('_', ' ')}: ${n.toLocaleString()}`).join('\n')}
+                                >
+                                    {s.lastRejected.toLocaleString()} untradable filtered
+                                    {s.lastPruned ? ` · ${s.lastPruned.toLocaleString()} stale pruned` : ''}
+                                </div>
+                            )}
                             {s?.lastError && (
                                 <div className={styles.rowError} title={s.lastError}>
                                     ⚠ Failed {ago(s.lastErrorAt)}: {s.lastError}

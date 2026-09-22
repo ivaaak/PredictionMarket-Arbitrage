@@ -71,6 +71,10 @@ export class KalshiService {
         const result = await pool.query(
             `SELECT * FROM kalshi_data
              WHERE (close_time IS NULL OR close_time > NOW())
+               -- Rows stored before the ingest quality filter existed may be
+               -- untradable; only markets something can be bought on can be an arbitrage leg.
+               AND (yes_ask IS NOT NULL OR no_ask IS NOT NULL)
+               AND volume > 0
                AND ($2::text IS NULL OR title ILIKE $2 OR event_title ILIKE $2)
              ORDER BY volume DESC
              LIMIT $1`,

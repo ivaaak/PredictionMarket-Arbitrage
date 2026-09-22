@@ -229,11 +229,34 @@ export const PostgresClient = {
         }
     },
 
-    async savePolymarketMarkets(rows: MarketData[]): Promise<void> {
-        await upsertMarkets('polymarket_data', 'polymarket', rows);
+    async savePolymarketMarkets(rows: MarketData[], pruneStale = false): Promise<number> {
+        return saveSweep('polymarket_data', 'polymarket', rows, pruneStale);
     },
 
-    async saveKalshiMarkets(rows: MarketData[]): Promise<void> {
-        await upsertMarkets('kalshi_data', 'kalshi', rows);
+    async saveKalshiMarkets(rows: MarketData[], pruneStale = false): Promise<number> {
+        return saveSweep('kalshi_data', 'kalshi', rows, pruneStale);
     }
 };
+
+/**
+ * Upserts one sweep and, when `pruneStale`, deletes the table's rows the sweep
+ * did not touch: markets that closed, were delisted, or no longer pass the
+ * quality filter. Rows a saved match references are kept (deleting them would
+ * cascade into matched_events). Returns the number of rows pruned.
+ */
+async function saveSweep(table: MarketTable, platform: string, rows: MarketData[], pruneStale: boolean): Promise<number> {
+    // Taken from the DB clock before the upsert, whose rows all get a later
+    // updated_at, so "older than this" means "not in this sweep".
+    const { rows: [{ now }] } = await pool.query('SELECT NOW() AS now');
+    await upsertMarkets(table, platform, rows);
+    if (!pruneStale || rows.length === 0) return 0;
+
+    const fk = table === 'polymarket_data' ? 'polymarket_id' : 'kalshi_id';
+    const result = await pool.query(
+        `DELETE FROM ${table} t
+         WHERE t.updated_at < $1
+           AND NOT EXISTS (SELECT 1 FROM matched_events m WHERE m.${fk} = t.id)`,
+        [now]
+    );
+    return result.rowCount ?? 0;
+}

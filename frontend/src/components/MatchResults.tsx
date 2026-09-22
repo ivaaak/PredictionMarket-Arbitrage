@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import styles from './MatchResults.module.css';
-import { MarketMatch } from '../types';
+import { MarketMatch, TraceEvent } from '../types';
+import { PipelineTrace } from './PipelineTrace';
+import { DemoScenario } from './pipelineDemo';
 
 interface MatchedEvent {
     id: number;
@@ -22,9 +24,13 @@ interface MatchedEvent {
 
 interface MatchResultsProps {
     matches: MarketMatch[];
+    trace: TraceEvent[];
+    isMatching: boolean;
+    demo: DemoScenario | null;
+    onRunDemo: (scenario: DemoScenario) => void;
 }
 
-export function MatchResults({ matches }: MatchResultsProps) {
+export function MatchResults({ matches, trace, isMatching, demo, onRunDemo }: MatchResultsProps) {
     const [dbMatches, setDbMatches] = useState<MatchedEvent[]>([]);
     const [loading, setLoading] = useState(false);
     const [showDbMatches, setShowDbMatches] = useState(false);
@@ -98,19 +104,34 @@ export function MatchResults({ matches }: MatchResultsProps) {
         return `${styles.badge} ${styles.low}`;
     };
 
+    const pipeline = <PipelineTrace events={trace} running={isMatching} demo={demo} onRunDemo={onRunDemo} />;
+
     if (matches.length === 0 && !showDbMatches) {
         return (
-            <div className={styles.emptyState}>
-                <h3>No Live Opportunities Found</h3>
-                <p>Check filters or view previously saved matches.</p>
-                <button className={styles.executeButton} onClick={() => setShowDbMatches(true)}>
-                    View Database History
-                </button>
+            <div className={styles.stack}>
+                {pipeline}
+                <div className={styles.emptyState}>
+                    <h3>{isMatching ? (demo ? 'Demo running…' : 'Analyzing markets…') : 'No Live Opportunities Found'}</h3>
+                    <p>
+                        {isMatching
+                            ? 'Watch the pipeline above as it works.'
+                            : demo
+                                ? 'Demo runs are scripted and produce no market pairs.'
+                                : 'Check filters or view previously saved matches.'}
+                    </p>
+                    {!isMatching && (
+                        <button className={styles.executeButton} onClick={() => setShowDbMatches(true)}>
+                            View Database History
+                        </button>
+                    )}
+                </div>
             </div>
         );
     }
 
     return (
+        <div className={styles.stack}>
+        {!showDbMatches && pipeline}
         <div className={styles.container}>
             <div className={styles.header}>
                 <h2>{showDbMatches ? 'Stored Market Pairs' : 'Live Arbitrage Feed'}</h2>
@@ -231,6 +252,7 @@ export function MatchResults({ matches }: MatchResultsProps) {
                     </tbody>
                 </table>
             </div>
+        </div>
         </div>
     );
 }

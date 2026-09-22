@@ -1,6 +1,8 @@
 import chalk from 'chalk';
 import { KALSHI_API_BASE } from '../config';
 import { MarketData } from '../database/postgres.client';
+import { SweepBatch } from '../types/ingestion';
+import { QualityTally } from './market-quality';
 
 // Kalshi quotes every price as a fixed-point dollar string ("0.4200") and
 // every size/volume as a fixed-point string ("118844.56"). The legacy integer
@@ -19,7 +21,10 @@ interface KalshiMarket {
     yes_ask_dollars?: string;
     no_bid_dollars?: string;
     no_ask_dollars?: string;
+    yes_bid_size_fp?: string;
+    yes_ask_size_fp?: string;
     volume_fp?: string;
+    open_interest_fp?: string;
 }
 
 interface KalshiEvent {
@@ -94,7 +99,7 @@ export class KalshiPollingClient {
     private isPollInFlight = false;
 
     constructor(
-        private readonly onBatch: (markets: MarketData[]) => Promise<void>,
+        private readonly onBatch: (sweep: SweepBatch) => Promise<void>,
         private readonly intervalMs: number,
         private readonly maxPages: number,
         private readonly onError?: (message: string) => void
@@ -115,10 +120,13 @@ export class KalshiPollingClient {
         return response.json() as Promise<KalshiEventsResponse>;
     }
 
-    private async fetchAllMarkets(): Promise<MarketData[]> {
-        const now = Math.floor(Date.now() / 1000);
+    private async fetchAllMarkets(): Promise<SweepBatch> {
+        const nowMs = Date.now();
+        const now = Math.floor(nowMs / 1000);
         const markets: MarketData[] = [];
+        const tally = new QualityTally();
         let cursor: string | undefined;
+        let complete = false;
 
         for (let page = 0; page < this.maxPages; page++) {
             const data = await this.fetchPage(cursor);
@@ -127,16 +135,27 @@ export class KalshiPollingClient {
                 for (const market of event.markets || []) {
                     if (market.market_type && market.market_type !== 'binary') continue;
                     if (market.status && market.status !== 'active') continue;
-                    markets.push(toMarketData(event, market, now));
+                    const row = toMarketData(event, market, now);
+                    const depth = (parseDollars(market.yes_bid_size_fp) ?? 0) + (parseDollars(market.yes_ask_size_fp) ?? 0);
+                    const signals = {
+                        // Older API responses omit the size fields; don't reject on their absence.
+                        bookDepth: market.yes_bid_size_fp === undefined && market.yes_ask_size_fp === undefined ? null : depth,
+                        openInterest: parseDollars(market.open_interest_fp)
+                    };
+                    if (tally.admit(row, signals, nowMs)) markets.push(row);
                 }
             }
 
             cursor = data.cursor || undefined;
-            if (!cursor) break;
+            if (!cursor) {
+                complete = true;
+                break;
+            }
             await sleep(PAGE_DELAY_MS);
         }
 
-        return markets;
+        console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.gray(`Quality filter: ${tally.describe()}${complete ? '' : ' (stopped at page cap)'}`));
+        return { markets, rejected: tally.rejected as Record<string, number>, complete };
     }
 
     private async poll() {
@@ -147,9 +166,9 @@ export class KalshiPollingClient {
         this.isPollInFlight = true;
 
         try {
-            const markets = await this.fetchAllMarkets();
-            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.green(`Fetched ${markets.length} open markets`));
-            await this.onBatch(markets);
+            const sweep = await this.fetchAllMarkets();
+            console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.green(`Fetched ${sweep.markets.length} tradable open markets`));
+            await this.onBatch(sweep);
         } catch (error) {
             console.error(chalk.red.bold('[KALSHI-POLLING]'), chalk.red('Poll failed:'), error);
             this.onError?.(error instanceof Error ? error.message : String(error));

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import styles from './App.module.css';
 import { PolymarketTable } from './components/PolymarketTable';
 import { KalshiTable } from './components/KalshiTable';
@@ -6,7 +6,8 @@ import { MatchingPanel } from './components/MatchingPanel';
 import { MatchResults } from './components/MatchResults';
 import { IngestionControl } from './components/IngestionControl';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
-import { MarketMatch } from './types';
+import { playDemo, DemoScenario } from './components/pipelineDemo';
+import { MarketMatch, TraceEvent } from './types';
 
 type Tab = 'polymarket' | 'kalshi' | 'arbitrage' | 'analytics';
 
@@ -20,15 +21,44 @@ const TABS: { id: Tab; label: string }[] = [
 function App() {
     const [matches, setMatches] = useState<MarketMatch[]>([]);
     const [isMatching, setIsMatching] = useState(false);
+    const [trace, setTrace] = useState<TraceEvent[]>([]);
+    const [demo, setDemo] = useState<DemoScenario | null>(null);
+    const cancelDemo = useRef<(() => void) | null>(null);
+
+    useEffect(() => () => cancelDemo.current?.(), []);
     const [activeTab, setActiveTab] = useState<Tab>('arbitrage');
 
     const handleMatchComplete = (newMatches: MarketMatch[]) => {
         setMatches(newMatches);
         setIsMatching(false);
-        // Auto-switch to arbitrage tab on search completion
-        if (newMatches.length > 0) {
-            setActiveTab('arbitrage');
-        }
+    };
+
+    const stopDemo = () => {
+        cancelDemo.current?.();
+        cancelDemo.current = null;
+        setDemo(null);
+    };
+
+    // Replays a scripted run through the same trace UI, with no backend calls.
+    const runDemo = (scenario: DemoScenario) => {
+        stopDemo();
+        setTrace([]);
+        setDemo(scenario);
+        setIsMatching(true);
+        setActiveTab('arbitrage');
+        cancelDemo.current = playDemo(
+            scenario,
+            (event) => setTrace(prev => [...prev, event]),
+            () => { cancelDemo.current = null; setIsMatching(false); },
+        );
+    };
+
+    const handleMatchStart = () => {
+        stopDemo();
+        setTrace([]);
+        setIsMatching(true);
+        // Show the arbitrage view, where the pipeline trace plays out live.
+        setActiveTab('arbitrage');
     };
 
     const avgConfidence = matches.length
@@ -93,8 +123,9 @@ function App() {
                     <div className={styles.sidebarContent}>
                         <IngestionControl />
                         <MatchingPanel
-                            onMatchStart={() => setIsMatching(true)}
+                            onMatchStart={handleMatchStart}
                             onMatchComplete={handleMatchComplete}
+                            onTrace={(event) => setTrace(prev => [...prev, event])}
                             isMatching={isMatching}
                         />
                     </div>
@@ -108,7 +139,13 @@ function App() {
                         {activeTab === 'kalshi' && <KalshiTable />}
 
                         {activeTab === 'arbitrage' && (
-                            <MatchResults matches={matches} />
+                            <MatchResults
+                                matches={matches}
+                                trace={trace}
+                                isMatching={isMatching}
+                                demo={demo}
+                                onRunDemo={runDemo}
+                            />
                         )}
 
                         {activeTab === 'analytics' && <AnalyticsDashboard liveMatches={matches} />}

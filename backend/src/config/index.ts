@@ -27,6 +27,21 @@ export const POLYMARKET_POLLING_INTERVAL_MS = parseInt(process.env.POLYMARKET_PO
 export const KALSHI_MAX_PAGES = parseInt(process.env.KALSHI_MAX_PAGES || '50', 10);
 export const POLYMARKET_MAX_PAGES = parseInt(process.env.POLYMARKET_MAX_PAGES || '50', 10);
 
+// Ingest-time market quality filter (see api-clients/market-quality.ts). Only
+// markets that could be one leg of an arbitrage are stored.
+// Minimum lifetime volume (Kalshi: contracts, Polymarket: dollars). On Kalshi a
+// market with open interest but no recorded volume also passes.
+export const INGEST_MIN_VOLUME = parseFloat(process.env.INGEST_MIN_VOLUME || '1');
+// Kalshi: minimum contracts resting at the best YES bid + best YES ask.
+export const INGEST_MIN_BOOK_DEPTH = parseFloat(process.env.INGEST_MIN_BOOK_DEPTH || '1');
+// Polymarket: minimum order-book liquidity in dollars, as Gamma reports it.
+export const INGEST_MIN_POLYMARKET_LIQUIDITY = parseFloat(process.env.INGEST_MIN_POLYMARKET_LIQUIDITY || '10');
+// Maximum YES ask - bid (dollars); wider books carry no usable price.
+export const INGEST_MAX_SPREAD = parseFloat(process.env.INGEST_MAX_SPREAD || '0.4');
+// After a complete sweep, delete stored markets the sweep no longer returned
+// (closed, delisted or now filtered out), except ones a saved match references.
+export const INGEST_PRUNE_STALE = process.env.INGEST_PRUNE_STALE !== 'false';
+
 // --- Matching ---
 // How many markets per platform (highest volume first) a match run considers
 // when the request does not set `limit`.

@@ -9,7 +9,7 @@ import {
     POLYMARKET_MAX_PAGES,
     POLYMARKET_POLLING_INTERVAL_MS
 } from '../config';
-import { IngestionSource, IngestionStatus, IngestorCommand, IngestorEvent, SourceStatus } from '../types/ingestion';
+import { IngestionSource, IngestionStatus, IngestorCommand, IngestorEvent, SourceStatus, SweepReport } from '../types/ingestion';
 
 interface Ingestor {
     start(): void;
@@ -28,6 +28,9 @@ const emptyStatus = (source: IngestionSource): SourceStatus => ({
     sweeps: 0,
     lastSweepAt: null,
     lastSweepCount: null,
+    lastRejected: null,
+    lastRejectedByReason: null,
+    lastPruned: null,
     lastError: null,
     lastErrorAt: null
 });
@@ -40,16 +43,19 @@ const state: IngestionStatus = {
 const post = (event: IngestorEvent) => parentPort?.postMessage(event);
 const publishState = () => post({ status: 'state', state });
 
-const onSweep = (source: IngestionSource) => (savedCount: number, error?: string) => {
+const onSweep = (source: IngestionSource) => (report: SweepReport | null, error?: string) => {
     const s = state[source];
-    if (error) {
+    if (error || !report) {
         // Keep the last good sweep's numbers; the error is shown alongside them.
-        s.lastError = error;
+        s.lastError = error ?? 'Unknown error';
         s.lastErrorAt = new Date().toISOString();
     } else {
         s.sweeps += 1;
         s.lastSweepAt = new Date().toISOString();
-        s.lastSweepCount = savedCount;
+        s.lastSweepCount = report.saved;
+        s.lastRejectedByReason = report.rejected;
+        s.lastRejected = Object.values(report.rejected).reduce((a, b) => a + b, 0);
+        s.lastPruned = report.pruned;
         s.lastError = null;
     }
     publishState();

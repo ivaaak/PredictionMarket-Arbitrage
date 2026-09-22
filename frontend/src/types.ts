@@ -67,6 +67,11 @@ export interface SourceStatus {
     sweeps: number;
     lastSweepAt: string | null;
     lastSweepCount: number | null;
+    /** Markets the ingest quality filter dropped in the last sweep. */
+    lastRejected: number | null;
+    lastRejectedByReason: Record<string, number> | null;
+    /** Stored markets deleted after the last complete sweep. */
+    lastPruned: number | null;
     lastError: string | null;
     lastErrorAt: string | null;
 }
@@ -96,3 +101,28 @@ export interface StatsOverview {
     priceUpdates: { hours: number[]; polymarket: number[]; kalshi: number[] };
     storedMatches: { id: number; title: string; spread: number; confidence: number; volume: number }[];
 }
+
+// ---- Matching run trace (streamed from POST /api/matching/match/stream) ----
+
+export type TraceStage = 'fetch' | 'embed' | 'cache' | 'judge' | 'price';
+
+export type TraceEvent = { t: number } & (
+    | {
+        type: 'config';
+        mode: 'consensus' | 'single' | 'pinned';
+        agents: { id: string; model: string }[];
+        consensusThreshold: number | null;
+    }
+    | {
+        type: 'stage';
+        stage: TraceStage;
+        status: 'start' | 'done' | 'skipped';
+        detail?: string;
+        stats?: Record<string, number>;
+    }
+    | { type: 'batch'; batch: number; total: number; status: 'start' | 'done' | 'failed'; polyMarkets: number; pairs: number; accepted?: number; error?: string }
+    | { type: 'agent'; batch: number; agent: string; status: 'start' | 'done' | 'failed'; ms?: number; proposed?: number; error?: string }
+    | { type: 'consensus'; batch: number; responded: string[]; requiredVotes: number; accepted: number; proposedPairs: number; votes: Record<string, number> }
+    | { type: 'result'; success: true; matches: MarketMatch[]; matchedCount: number; candidatePairs: number; newlyJudgedPairs: number }
+    | { type: 'error'; success: false; error: string }
+);

@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { ANTHROPIC_API_KEY } from '../config';
 import { matchingEngine } from '../services/matching-engine.instance';
 import { MatchFilters } from '../types/matchFilters';
+import { TraceEvent } from '../types/matching-trace';
 
 const router = Router();
 
@@ -35,6 +36,34 @@ router.post('/match', async (req, res) => {
             error: error instanceof Error ? error.message : String(error)
         });
     }
+});
+
+// Same as POST /match, but streams the run as newline-delimited JSON: one
+// trace event per line while it works (stages, LLM batches, agent votes),
+// then a final { type: 'result' } or { type: 'error' } line.
+router.post('/match/stream', async (req, res) => {
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const started = Date.now();
+    let closed = false;
+    res.on('close', () => { closed = true; });
+    const send = (line: object) => {
+        if (!closed) res.write(JSON.stringify({ ...line, t: Date.now() - started }) + '\n');
+    };
+
+    try {
+        const filters = filtersFrom(req.body);
+        console.log(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.cyan('Received streamed match request with filters:'), filters);
+        const result = await matchingEngine.matchMarkets(filters, (event: TraceEvent) => send(event));
+        send({ type: 'result', success: true, ...result });
+    } catch (error) {
+        console.error(chalk.yellow.bold('[MATCHING-ROUTES]'), chalk.red('Error in streamed match endpoint:'), error);
+        send({ type: 'error', success: false, error: error instanceof Error ? error.message : String(error) });
+    }
+    res.end();
 });
 
 // Find arbitrage opportunities.

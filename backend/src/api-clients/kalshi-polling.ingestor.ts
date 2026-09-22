@@ -1,23 +1,26 @@
 import chalk from 'chalk';
 import { KalshiPollingClient } from './kalshi.polling.client';
-import { MarketData, PostgresClient } from '../database/postgres.client';
-import { SweepListener } from '../types/ingestion';
+import { PostgresClient } from '../database/postgres.client';
+import { INGEST_PRUNE_STALE } from '../config';
+import { SweepBatch, SweepListener } from '../types/ingestion';
 
 export class KalshiPollingIngestor {
     private client: KalshiPollingClient;
 
     constructor(intervalMs: number, maxPages: number, onSweep?: SweepListener) {
-        const saveBatch = async (markets: MarketData[]) => {
+        const saveBatch = async (sweep: SweepBatch) => {
             try {
-                await PostgresClient.saveKalshiMarkets(markets);
-                console.log(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.green(`Saved ${markets.length} markets.`));
-                onSweep?.(markets.length);
+                // Pruning needs the whole catalogue: a sweep cut short by the
+                // page cap would delete every market it simply did not reach.
+                const pruned = await PostgresClient.saveKalshiMarkets(sweep.markets, INGEST_PRUNE_STALE && sweep.complete);
+                console.log(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.green(`Saved ${sweep.markets.length} markets${pruned ? `, pruned ${pruned} stale` : ''}.`));
+                onSweep?.({ saved: sweep.markets.length, rejected: sweep.rejected, pruned, complete: sweep.complete });
             } catch (e) {
                 console.error(chalk.yellow.bold('[INGEST-KALSHI-POLLING]'), chalk.red('Postgres write failed:'), e);
-                onSweep?.(0, e instanceof Error ? e.message : String(e));
+                onSweep?.(null, e instanceof Error ? e.message : String(e));
             }
         };
-        this.client = new KalshiPollingClient(saveBatch, intervalMs, maxPages, (msg) => onSweep?.(0, msg));
+        this.client = new KalshiPollingClient(saveBatch, intervalMs, maxPages, (msg) => onSweep?.(null, msg));
     }
 
     public start() {
