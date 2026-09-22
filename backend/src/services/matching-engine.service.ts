@@ -237,7 +237,11 @@ export class MatchingEngineService {
         };
         if (polymarketRecords.length === 0 || kalshiRecords.length === 0) return empty;
 
-        const candidates = await this.findCandidates(polymarketRecords, kalshiRecords);
+        // A manually chosen pair is always judged, whatever its vector similarity.
+        const pinnedPair = !!(filters.polymarketTicker && filters.kalshiTicker);
+        const candidates = pinnedPair
+            ? new Map(polymarketRecords.map((_, p) => [p, kalshiRecords.map((_, k) => k)]))
+            : await this.findCandidates(polymarketRecords, kalshiRecords);
         const verdicts = await MatchVerdictStore.getForPolymarketTickers(polymarketRecords.map(r => r.ticker));
 
         const unjudged = new Map<number, number[]>();

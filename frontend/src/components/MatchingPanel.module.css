@@ -5,50 +5,74 @@
 .form {
     display: flex;
     flex-direction: column;
+    gap: 0.9rem;
 }
 
 .section {
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0.75rem;
+    padding-bottom: 0.9rem;
 }
 
-.section:last-child {
+.section:last-of-type {
     border-bottom: none;
 }
 
 .sectionTitle {
-    color: var(--accent-primary);
-    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    margin: 0 0 0.5rem 0;
-    letter-spacing: 0.5px;
+    margin: 0 0 0.75rem 0;
+}
+
+.sectionTitle::before {
+    content: "";
+    width: 9px;
+    height: 9px;
+    background: var(--accent-primary);
+    flex-shrink: 0;
 }
 
 .inputGroup {
-    margin-bottom: 0.6rem;
+    margin-bottom: 0.7rem;
 }
 
 .inputGroup label {
     display: block;
-    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
     color: var(--text-secondary);
     margin-bottom: 0.3rem;
 }
 
-.input {
+.input,
+.select {
     width: 100%;
-    background-color: #16161e; /* Darker than sidebar */
+    background-color: var(--bg-input);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    padding: 0.5rem;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 0.85rem;
+    padding: 0.45rem 0.55rem;
+    border-radius: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
 }
 
-.input:focus {
+.select {
+    cursor: pointer;
+}
+
+.input:focus,
+.select:focus {
     outline: none;
     border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px var(--tint-primary);
 }
 
 .rangeWrapper {
@@ -63,33 +87,18 @@
 }
 
 .rangeValue {
-    font-family: monospace;
-    color: var(--accent-success);
-}
-
-.select {
-    width: 100%;
-    background-color: #16161e;
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    padding: 0.5rem;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 0.85rem;
-    cursor: pointer;
-}
-
-.select:focus {
-    outline: none;
-    border-color: var(--accent-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--accent-primary);
 }
 
 .toggleWrapper {
     display: flex;
     align-items: center;
     position: relative;
-    width: 44px;
-    height: 22px;
+    width: 40px;
+    height: 20px;
 }
 
 .toggleInput {
@@ -101,83 +110,208 @@
 .toggleSlider {
     position: absolute;
     cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--border-color);
-    transition: 0.3s;
-    border-radius: 22px;
+    inset: 0;
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-strong);
+    transition: 0.2s;
+    border-radius: 20px;
 }
 
 .toggleSlider:before {
     position: absolute;
     content: "";
-    height: 16px;
-    width: 16px;
+    height: 12px;
+    width: 12px;
     left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: 0.3s;
+    top: 3px;
+    background-color: var(--text-primary);
+    transition: 0.2s;
     border-radius: 50%;
 }
 
 .toggleInput:checked + .toggleSlider {
     background-color: var(--accent-primary);
+    border-color: var(--accent-primary);
 }
 
 .toggleInput:checked + .toggleSlider:before {
-    transform: translateX(22px);
+    background-color: #fff;
+    transform: translateX(20px);
 }
 
 .analyzePairButton {
     width: 100%;
-    padding: 0.75rem;
-    background-color: var(--accent-primary);
-    color: #fff;
-    border: none;
-    border-radius: 4px;
-    font-weight: 600;
+    padding: 0.55rem;
+    background-color: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: background-color 0.2s;
-    font-size: 0.9rem;
-    margin-top: 0.5rem;
+    transition: background-color 0.15s;
+    margin-top: 0.4rem;
 }
 
 .analyzePairButton:hover {
-    background-color: #618bf4;
+    background-color: var(--bg-panel-hover);
 }
 
 .analyzeButton {
     width: 100%;
-    padding: 1rem;
+    padding: 0.8rem;
     background-color: var(--accent-primary);
     color: #fff;
-    border: none;
-    border-radius: 4px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background-color 0.2s;
+    border: 1px solid var(--accent-primary);
+    border-radius: 0;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.15s;
 }
 
 .analyzeButton:hover:not(:disabled) {
-    background-color: #618bf4;
+    background-color: var(--accent-primary-hover);
 }
 
 .analyzeButton:disabled {
-    background-color: var(--border-color);
+    background-color: var(--bg-panel-hover);
+    border-color: var(--border-color);
+    color: var(--text-muted);
     cursor: not-allowed;
-    color: var(--text-secondary);
 }
 
 .error {
     color: var(--accent-danger);
-    font-size: 0.85rem;
-    margin-bottom: 1rem;
-    padding: 0.5rem;
-    background: rgba(247, 118, 142, 0.1);
-    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--accent-danger);
+    background: var(--tint-primary);
+}
+
+/* Market picker */
+.pickerBox {
+    position: relative;
+}
+
+.pickerList {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    background: var(--bg-input);
+    border: 1px solid var(--border-strong);
+    box-shadow: 0 6px 18px rgba(30, 26, 22, 0.12);
+}
+
+.pickerItem {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 0.45rem 0.55rem;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    color: var(--text-primary);
+}
+
+.pickerItem:hover,
+.pickerItem:focus-visible {
+    background: var(--tint-primary);
+    outline: none;
+}
+
+.pickerTitle {
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.pickerMeta,
+.pickedMeta {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pickerEmpty {
+    padding: 0.55rem;
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.picked {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    background: var(--tint-primary);
+    border: 1px solid var(--accent-primary);
+}
+
+.pickedText {
+    flex: 1;
+    min-width: 0;
+}
+
+.pickedTitle {
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.clearButton {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    cursor: pointer;
+    line-height: 1;
+    font-size: 0.9rem;
+}
+
+.clearButton:hover {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: #fff;
+}
+
+.analyzePairButton:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.hint {
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: -0.2rem 0 0.4rem;
+    line-height: 1.5;
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import styles from './MatchingPanel.module.css';
-import { MatchFilters, MarketMatch } from '../types';
+import { MatchFilters, MarketMatch, MarketSearchHit } from '../types';
+import { MarketPicker } from './MarketPicker';
 
 interface MatchingPanelProps {
     onMatchStart: () => void;
@@ -16,35 +17,51 @@ export function MatchingPanel({ onMatchStart, onMatchComplete, isMatching }: Mat
     const [minLiquidity, setMinLiquidity] = useState(10000);
     const [maxResolutionDate, setMaxResolutionDate] = useState('2026-12-31');
     const [matchConfidence, setMatchConfidence] = useState('medium-high');
-    const [autoMatch, setAutoMatch] = useState(false);
-    const [platformA, setPlatformA] = useState('polymarket');
-    const [platformB, setPlatformB] = useState('kalshi');
+    const [pairPoly, setPairPoly] = useState<MarketSearchHit | null>(null);
+    const [pairKalshi, setPairKalshi] = useState<MarketSearchHit | null>(null);
     const [category, setCategory] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const [pairNotice, setPairNotice] = useState<string | null>(null);
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const runMatch = async (body: MatchFilters): Promise<MarketMatch[] | null> => {
         setError(null);
+        setPairNotice(null);
         onMatchStart();
 
         try {
             const response = await fetch('/api/matching/match', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(filters)
+                body: JSON.stringify(body)
             });
 
             const result = await response.json();
 
             if (result.success) {
                 onMatchComplete(result.matches);
-            } else {
-                setError(result.error);
-                onMatchComplete([]);
+                return result.matches;
             }
+            setError(result.error);
+            onMatchComplete([]);
         } catch (err) {
             setError(String(err));
             onMatchComplete([]);
+        }
+        return null;
+    };
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        runMatch(filters);
+    };
+
+    // Judges exactly this one Polymarket/Kalshi pair (the engine narrows each
+    // side to the given ticker), bypassing keyword search and volume ranking.
+    const analyzePair = async () => {
+        if (!pairPoly || !pairKalshi) return;
+        const found = await runMatch({ polymarketTicker: pairPoly.ticker, kalshiTicker: pairKalshi.ticker });
+        if (found && found.length === 0) {
+            setPairNotice('Judged as different events: no arbitrage between these two markets.');
         }
     };
 
@@ -64,54 +81,26 @@ export function MatchingPanel({ onMatchStart, onMatchComplete, isMatching }: Mat
                             onChange={(e) => setFilters({ ...filters, search: e.target.value || undefined })}
                         />
                     </div>
+                </div>
 
-                    <div className={styles.inputGroup}>
-                        <label>Auto-Match Algorithm</label>
-                        <label className={styles.toggleWrapper}>
-                            <input
-                                type="checkbox"
-                                checked={autoMatch}
-                                onChange={(e) => setAutoMatch(e.target.checked)}
-                                className={styles.toggleInput}
-                            />
-                            <span className={styles.toggleSlider}></span>
-                        </label>
-                    </div>
+                <div className={styles.section}>
+                    <h3 className={styles.sectionTitle}>Manual Pair Analysis</h3>
+                    <p className={styles.hint}>
+                        Pick one market from each venue to have the engine judge whether they are the same event and price the arbitrage.
+                    </p>
 
-                    {!autoMatch && (
-                        <>
-                            <div className={styles.inputGroup}>
-                                <label>Manual Pair Analysis:</label>
-                            </div>
-                            
-                            <div className={styles.inputGroup}>
-                                <select 
-                                    className={styles.select}
-                                    value={platformA}
-                                    onChange={(e) => setPlatformA(e.target.value)}
-                                >
-                                    <option value="polymarket">Polymarket</option>
-                                </select>
-                            </div>
+                    <MarketPicker venue="polymarket" label="Polymarket market" value={pairPoly} onChange={setPairPoly} />
+                    <MarketPicker venue="kalshi" label="Kalshi market" value={pairKalshi} onChange={setPairKalshi} />
 
-                            <div className={styles.inputGroup}>
-                                <select 
-                                    className={styles.select}
-                                    value={platformB}
-                                    onChange={(e) => setPlatformB(e.target.value)}
-                                >
-                                    <option value="kalshi">Kalshi</option>
-                                </select>
-                            </div>
-
-                            <button 
-                                type="button"
-                                className={styles.analyzePairButton}
-                            >
-                                Analyze Pair
-                            </button>
-                        </>
-                    )}
+                    <button
+                        type="button"
+                        className={styles.analyzePairButton}
+                        disabled={!pairPoly || !pairKalshi || isMatching}
+                        onClick={analyzePair}
+                    >
+                        {isMatching ? 'Analyzing…' : 'Analyze Pair'}
+                    </button>
+                    {pairNotice && <p className={styles.hint} style={{ marginTop: '0.5rem' }}>{pairNotice}</p>}
                 </div>
 
                 <div className={styles.section}>

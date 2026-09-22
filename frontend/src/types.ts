@@ -59,3 +59,40 @@ export interface MatchFilters {
     search?: string;
     limit?: number;
 }
+export type Venue = 'polymarket' | 'kalshi';
+
+export interface SourceStatus {
+    running: boolean;
+    intervalMs: number;
+    sweeps: number;
+    lastSweepAt: string | null;
+    lastSweepCount: number | null;
+    lastError: string | null;
+    lastErrorAt: string | null;
+}
+
+export type IngestionStatus = Record<Venue, SourceStatus> & { workerAlive: boolean };
+
+export interface MarketSearchHit {
+    ticker: string;
+    title: string | null;
+    event_title: string | null;
+    price: number;
+    volume: number;
+}
+
+export interface VenueStats {
+    total: number;
+    open: number;
+    totalVolume: number;
+    lastUpdatedAt: string | null;
+    priceBuckets: number[];
+    topByVolume: { ticker: string; title: string | null; price: number; volume: number }[];
+}
+
+export interface StatsOverview {
+    polymarket: VenueStats;
+    kalshi: VenueStats;
+    priceUpdates: { hours: number[]; polymarket: number[]; kalshi: number[] };
+    storedMatches: { id: number; title: string; spread: number; confidence: number; volume: number }[];
+}

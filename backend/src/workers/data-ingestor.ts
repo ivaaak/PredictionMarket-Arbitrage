@@ -9,74 +9,99 @@ import {
     POLYMARKET_MAX_PAGES,
     POLYMARKET_POLLING_INTERVAL_MS
 } from '../config';
+import { IngestionSource, IngestionStatus, IngestorCommand, IngestorEvent, SourceStatus } from '../types/ingestion';
 
-let polymarketIngestor: PolymarketIngestor;
-let kalshiIngestor: KalshiPollingIngestor;
+interface Ingestor {
+    start(): void;
+    stop(): void;
+    isRunning(): boolean;
+}
+
+const intervals: Record<IngestionSource, number> = {
+    polymarket: workerData?.polymarketPollingInterval || POLYMARKET_POLLING_INTERVAL_MS,
+    kalshi: workerData?.kalshiPollingInterval || KALSHI_POLLING_INTERVAL_MS
+};
+
+const emptyStatus = (source: IngestionSource): SourceStatus => ({
+    running: false,
+    intervalMs: intervals[source],
+    sweeps: 0,
+    lastSweepAt: null,
+    lastSweepCount: null,
+    lastError: null,
+    lastErrorAt: null
+});
+
+const state: IngestionStatus = {
+    polymarket: emptyStatus('polymarket'),
+    kalshi: emptyStatus('kalshi')
+};
+
+const post = (event: IngestorEvent) => parentPort?.postMessage(event);
+const publishState = () => post({ status: 'state', state });
+
+const onSweep = (source: IngestionSource) => (savedCount: number, error?: string) => {
+    const s = state[source];
+    if (error) {
+        // Keep the last good sweep's numbers; the error is shown alongside them.
+        s.lastError = error;
+        s.lastErrorAt = new Date().toISOString();
+    } else {
+        s.sweeps += 1;
+        s.lastSweepAt = new Date().toISOString();
+        s.lastSweepCount = savedCount;
+        s.lastError = null;
+    }
+    publishState();
+};
+
+const ingestors: Record<IngestionSource, Ingestor> = {
+    polymarket: new PolymarketIngestor(intervals.polymarket, POLYMARKET_MAX_PAGES, onSweep('polymarket')),
+    kalshi: new KalshiPollingIngestor(intervals.kalshi, KALSHI_MAX_PAGES, onSweep('kalshi'))
+};
+
+function setSource(source: IngestionSource, enabled: boolean) {
+    const ingestor = ingestors[source];
+    if (enabled) ingestor.start();
+    else ingestor.stop();
+    state[source].running = ingestor.isRunning();
+    console.log(chalk.cyan.bold('[WORKER]'), chalk.white(`${source} ingestion ${enabled ? 'enabled' : 'disabled'}`));
+    publishState();
+}
 
 /**
- * The main function that initializes the database and starts all
- * the dedicated ingestor services (runs inside the worker thread).
+ * Initializes the database and starts whichever ingestors the main thread
+ * asked for at spawn time (runs inside the worker thread). The rest can be
+ * toggled later through 'set' commands.
  */
 async function startIngestorWorker() {
     console.log(chalk.cyan.bold('[WORKER]'), chalk.white('Starting Data Ingestor Worker (Worker Thread)'));
 
     try {
-        // 1. Initialize Database (ensures connection is ready for the worker thread)
         await PostgresClient.initialize();
 
-        console.log(chalk.cyan.bold('[WORKER]'), chalk.yellow('📊 Starting ingestors to track open markets on both exchanges.'));
+        const autoStart: IngestionSource[] = workerData?.autoStart ?? [];
+        autoStart.forEach(source => setSource(source, true));
 
-        // 2. Start Kalshi Polling Ingestor
-        kalshiIngestor = new KalshiPollingIngestor(
-            workerData?.kalshiPollingInterval || KALSHI_POLLING_INTERVAL_MS,
-            KALSHI_MAX_PAGES
-        );
-        kalshiIngestor.start();
-
-        // 3. Start Polymarket Ingestor
-        polymarketIngestor = new PolymarketIngestor(
-            workerData?.polymarketPollingInterval || POLYMARKET_POLLING_INTERVAL_MS,
-            POLYMARKET_MAX_PAGES
-        );
-        polymarketIngestor.start();
-
-        console.log(chalk.cyan.bold('[WORKER]'), chalk.green('✅ All ingestors started successfully.'));
-
-        // Notify the main thread that the worker is ready
-        parentPort?.postMessage({ status: 'ready', message: 'Ingestors started.' });
-
+        post({ status: 'ready', message: `Ingestor worker ready (running: ${autoStart.join(', ') || 'none'}).` });
+        publishState();
     } catch (error) {
         console.error(chalk.cyan.bold('[WORKER]'), chalk.red('🚨 Fatal Error starting Data Ingestor Worker:'), error);
-        // Notify the main thread of the error and terminate the worker
-        parentPort?.postMessage({ status: 'error', message: 'Failed to start ingestors.', error: error instanceof Error ? error.message : 'Unknown error' });
+        post({ status: 'error', message: 'Failed to start ingestors.', error: error instanceof Error ? error.message : 'Unknown error' });
         process.exit(1);
     }
 }
 
-/**
- * Handles the stop signal sent from the main thread.
- */
-function stopIngestorWorker() {
-    console.log(chalk.cyan.bold('[WORKER]'), chalk.yellow('Received stop signal. Shutting down ingestors...'));
-
-    if (polymarketIngestor) {
-        polymarketIngestor.stop();
-    }
-
-    if (kalshiIngestor) {
-        kalshiIngestor.stop();
-    }
-
+function shutdown() {
+    console.log(chalk.cyan.bold('[WORKER]'), chalk.yellow('Received shutdown signal. Stopping ingestors...'));
+    Object.values(ingestors).forEach(i => i.stop());
     console.log(chalk.cyan.bold('[WORKER]'), chalk.green('All ingestors stopped. Exiting worker thread.'));
     process.exit(0);
 }
 
-// Listen for termination signals from the main thread
-parentPort?.on('message', (message) => {
-    if (message === 'stop') {
-        stopIngestorWorker();
-    }
+parentPort?.on('message', (command: IngestorCommand) => {
+    if (command.type === 'shutdown') shutdown();
+    else if (command.type === 'set') setSource(command.source, command.enabled);
 });
 
-// Start the ingestion process when the worker thread initializes
 startIngestorWorker();

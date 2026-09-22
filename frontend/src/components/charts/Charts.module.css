@@ -1,0 +1,188 @@
+.frame {
+    position: relative;
+    width: 100%;
+}
+
+.svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+}
+
+.grid {
+    stroke: var(--border-color);
+    stroke-width: 1;
+    stroke-dasharray: 2 3;
+}
+
+.baseline {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+}
+
+.crosshair {
+    stroke: var(--text-muted);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+}
+
+.ring {
+    stroke: var(--bg-panel);
+    stroke-width: 2;
+}
+
+.axisLabel {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    fill: var(--text-muted);
+}
+
+.axisTitle {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    fill: var(--text-secondary);
+}
+
+.tooltip {
+    position: absolute;
+    pointer-events: none;
+    z-index: 30;
+    min-width: 140px;
+    max-width: 260px;
+    padding: 7px 9px;
+    background: var(--text-primary);
+    color: var(--bg-panel);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    box-shadow: 0 6px 18px rgba(30, 26, 22, 0.2);
+}
+
+.tipTitle {
+    font-weight: 700;
+    margin-bottom: 4px;
+    line-height: 1.35;
+}
+
+.tipRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tipLabel {
+    flex: 1;
+    opacity: 0.75;
+}
+
+.tipValue {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.legendItem {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.empty {
+    padding: 2.5rem 1rem;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+/* Bar list */
+.barList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.barRow {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.barRank {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    padding-top: 2px;
+}
+
+.barBody {
+    flex: 1;
+    min-width: 0;
+}
+
+.barHead {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.76rem;
+}
+
+.barLabel {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.barValue {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.barTrack {
+    height: 6px;
+    margin-top: 4px;
+    background: var(--bg-panel-hover);
+}
+
+.barFill {
+    height: 100%;
+    border-radius: 0 4px 4px 0;
+    min-width: 2px;
+}
+
+.barSub {
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    color: var(--text-muted);
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

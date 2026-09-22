@@ -96,7 +96,8 @@ export class KalshiPollingClient {
     constructor(
         private readonly onBatch: (markets: MarketData[]) => Promise<void>,
         private readonly intervalMs: number,
-        private readonly maxPages: number
+        private readonly maxPages: number,
+        private readonly onError?: (message: string) => void
     ) {}
 
     private async fetchPage(cursor?: string): Promise<KalshiEventsResponse> {
@@ -151,6 +152,7 @@ export class KalshiPollingClient {
             await this.onBatch(markets);
         } catch (error) {
             console.error(chalk.red.bold('[KALSHI-POLLING]'), chalk.red('Poll failed:'), error);
+            this.onError?.(error instanceof Error ? error.message : String(error));
         } finally {
             this.isPollInFlight = false;
         }

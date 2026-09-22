@@ -92,7 +92,7 @@ export function MatchResults({ matches }: MatchResultsProps) {
     };
 
     const getConfidenceClass = (score: number) => {
-        if (score >= 0.9) return styles.exact;
+        if (score >= 0.9) return `${styles.badge} ${styles.exact}`;
         if (score >= 0.7) return `${styles.badge} ${styles.high}`;
         if (score >= 0.4) return `${styles.badge} ${styles.medium}`;
         return `${styles.badge} ${styles.low}`;

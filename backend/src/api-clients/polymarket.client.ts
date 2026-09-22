@@ -132,7 +132,8 @@ export class PolymarketPollingClient {
     constructor(
         private readonly onBatch: (markets: MarketData[]) => Promise<void>,
         private readonly intervalMs: number,
-        private readonly maxPages: number
+        private readonly maxPages: number,
+        private readonly onError?: (message: string) => void
     ) {}
 
     // Sorting by volume makes the page cap keep the most liquid markets. If the
@@ -208,6 +209,7 @@ export class PolymarketPollingClient {
             await this.onBatch(markets);
         } catch (error) {
             console.error(chalk.blue.bold('[POLYMARKET]'), chalk.red('Poll failed:'), describeFetchError(error));
+            this.onError?.(describeFetchError(error));
         } finally {
             this.isPollInFlight = false;
         }
@@ -225,5 +227,9 @@ export class PolymarketPollingClient {
             this.pollingInterval = null;
             console.log(chalk.blue.bold('[POLYMARKET]'), chalk.green('Polling stopped'));
         }
+    }
+
+    public isPolling(): boolean {
+        return this.pollingInterval !== null;
     }
 }
