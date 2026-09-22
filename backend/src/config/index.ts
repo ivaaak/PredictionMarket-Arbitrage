@@ -23,9 +23,9 @@ export const ENABLE_INGESTOR = process.env.ENABLE_INGESTOR !== 'false';
 // so these are deliberately slower than a single-endpoint poll would be.
 export const KALSHI_POLLING_INTERVAL_MS = parseInt(process.env.KALSHI_POLLING_INTERVAL_MS || '60000', 10);
 export const POLYMARKET_POLLING_INTERVAL_MS = parseInt(process.env.POLYMARKET_POLLING_INTERVAL_MS || '60000', 10);
-// Upper bound on pages fetched per sweep (Kalshi: 200 events/page, Polymarket: 500 markets/page).
+// Upper bound on pages fetched per sweep (Kalshi: 200 events/page, Polymarket: 100 markets/page).
 export const KALSHI_MAX_PAGES = parseInt(process.env.KALSHI_MAX_PAGES || '50', 10);
-export const POLYMARKET_MAX_PAGES = parseInt(process.env.POLYMARKET_MAX_PAGES || '10', 10);
+export const POLYMARKET_MAX_PAGES = parseInt(process.env.POLYMARKET_MAX_PAGES || '50', 10);
 
 // --- Matching ---
 // How many markets per platform (highest volume first) a match run considers
@@ -49,6 +49,9 @@ export const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+// MATCHING_MODE=single forces Claude-only matching even when the Gemini and
+// OpenAI keys are present; the default uses consensus whenever all keys are set.
+export const MATCHING_MODE = process.env.MATCHING_MODE === 'single' ? 'single' : 'auto';
 
 // --- Alerting (optional) ---
 export const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';

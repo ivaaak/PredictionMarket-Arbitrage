@@ -4,7 +4,7 @@
 // MiniLM embedding model (~80MB). Constructing one per controller would double
 // both, so every route shares this single instance.
 import chalk from 'chalk';
-import { ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY } from '../config';
+import { ANTHROPIC_API_KEY, GEMINI_API_KEY, MATCHING_MODE, OPENAI_API_KEY } from '../config';
 import { MatchingEngineService } from './matching-engine.service';
 
 if (!ANTHROPIC_API_KEY) {
@@ -17,5 +17,6 @@ if (!ANTHROPIC_API_KEY) {
 export const matchingEngine = new MatchingEngineService(
     ANTHROPIC_API_KEY,
     GEMINI_API_KEY || undefined,
-    OPENAI_API_KEY || undefined
+    OPENAI_API_KEY || undefined,
+    MATCHING_MODE !== 'single'
 );

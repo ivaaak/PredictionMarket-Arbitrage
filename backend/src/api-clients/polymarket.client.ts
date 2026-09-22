@@ -32,7 +32,8 @@ interface GammaMarket {
     events?: { title?: string }[];
 }
 
-const PAGE_SIZE = 500;
+// Gamma silently caps `limit` at 100, so asking for more just returns 100.
+const PAGE_SIZE = 100;
 const PAGE_DELAY_MS = 200;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -100,6 +101,30 @@ export function toMarketData(market: GammaMarket, now: number): MarketData | nul
     };
 }
 
+const CERT_ERROR_CODES = new Set([
+    'DEPTH_ZERO_SELF_SIGNED_CERT',
+    'SELF_SIGNED_CERT_IN_CHAIN',
+    'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    'ERR_TLS_CERT_ALTNAME_INVALID'
+]);
+
+/**
+ * fetch() hides the real reason in `cause`. A certificate error here almost
+ * always means the network is not reaching Polymarket at all: some ISPs answer
+ * blocked domains with their own server and a self-signed certificate. Say so
+ * instead of printing a stack trace every poll.
+ */
+function describeFetchError(error: unknown): string {
+    const cause = (error as { cause?: { code?: string; message?: string } })?.cause;
+    if (cause?.code && CERT_ERROR_CODES.has(cause.code)) {
+        return `TLS certificate rejected (${cause.code}) for ${POLYMARKET_GAMMA_API_BASE}. ` +
+            'Your network is likely intercepting or blocking Polymarket (e.g. an ISP block page). ' +
+            'Check with: nslookup gamma-api.polymarket.com';
+    }
+    if (cause?.message) return `${(error as Error).message}: ${cause.message}`;
+    return error instanceof Error ? error.message : String(error);
+}
+
 export class PolymarketPollingClient {
     private pollingInterval: NodeJS.Timeout | null = null;
     private isPollInFlight = false;
@@ -146,8 +171,13 @@ export class PolymarketPollingClient {
         const markets: MarketData[] = [];
         const seen = new Set<string>();
 
+        let offset = 0;
         for (let page = 0; page < this.maxPages; page++) {
-            const rows = await this.fetchPage(page * PAGE_SIZE);
+            const rows = await this.fetchPage(offset);
+            // Stop on an empty page rather than a short one: the server's page
+            // cap is not ours to assume.
+            if (rows.length === 0) break;
+            offset += rows.length;
 
             for (const row of rows) {
                 if (row.closed || row.enableOrderBook === false || row.acceptingOrders === false) continue;
@@ -159,7 +189,6 @@ export class PolymarketPollingClient {
                 }
             }
 
-            if (rows.length < PAGE_SIZE) break;
             await sleep(PAGE_DELAY_MS);
         }
 
@@ -178,7 +207,7 @@ export class PolymarketPollingClient {
             console.log(chalk.blue.bold('[POLYMARKET]'), chalk.green(`Fetched ${markets.length} open binary markets`));
             await this.onBatch(markets);
         } catch (error) {
-            console.error(chalk.blue.bold('[POLYMARKET]'), chalk.red('Poll failed:'), error);
+            console.error(chalk.blue.bold('[POLYMARKET]'), chalk.red('Poll failed:'), describeFetchError(error));
         } finally {
             this.isPollInFlight = false;
         }
