@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import { PolymarketService } from '../services/polymarket.service';
+import { listMarkets, parseMarketListQuery } from '../services/market-list';
+import { PolymarketDataRecord } from '../types/polymarketDataRecord';
 
 const polymarketRouter = Router();
 
-// Get all Polymarket records
+// List markets, with optional search, filters and sort (see services/market-list.ts)
 polymarketRouter.get('/', async (req, res) => {
     try {
-        const limit = parseInt(req.query.limit as string) || 100;
-        const offset = parseInt(req.query.offset as string) || 0;
-        const data = await PolymarketService.getAll(limit, offset);
-        res.json({ success: true, data, count: data.length });
+        const { rows, total } = await listMarkets<PolymarketDataRecord>('polymarket_data', parseMarketListQuery(req.query));
+        res.json({ success: true, data: rows, count: rows.length, total });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
     }

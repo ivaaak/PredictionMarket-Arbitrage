@@ -132,6 +132,8 @@ function describeFetchError(error: unknown): string {
 export class PolymarketPollingClient {
     private pollingInterval: NodeJS.Timeout | null = null;
     private isPollInFlight = false;
+    // Aborted by stopPolling() so a sweep already under way stops fetching and never saves.
+    private sweepAbort: AbortController | null = null;
 
     constructor(
         private readonly onBatch: (sweep: SweepBatch) => Promise<void>,
@@ -145,30 +147,37 @@ export class PolymarketPollingClient {
     // stopping ingestion altogether.
     private sortByVolume = true;
 
-    private async fetchPage(offset: number): Promise<GammaMarket[]> {
+    // Gamma rejects /markets offsets above 2000 with a 422, so pages are walked
+    // with /markets/keyset cursors instead. The last page omits next_cursor.
+    private async fetchPage(cursor: string | null): Promise<{ rows: GammaMarket[]; nextCursor: string | null }> {
         const params = new URLSearchParams({
             active: 'true',
             closed: 'false',
             archived: 'false',
-            limit: String(PAGE_SIZE),
-            offset: String(offset)
+            limit: String(PAGE_SIZE)
         });
+        if (cursor) params.set('after_cursor', cursor);
         if (this.sortByVolume) {
             params.set('order', 'volumeNum');
             params.set('ascending', 'false');
         }
 
-        const response = await fetch(`${POLYMARKET_GAMMA_API_BASE}/markets?${params}`);
-        if (response.status >= 400 && response.status < 500 && this.sortByVolume) {
-            console.warn(chalk.blue.bold('[POLYMARKET]'), chalk.yellow(`Sorted query rejected (${response.status}); retrying unsorted`));
+        const response = await fetch(`${POLYMARKET_GAMMA_API_BASE}/markets/keyset?${params}`, { signal: this.sweepAbort?.signal });
+        if (response.status >= 400 && response.status < 500 && this.sortByVolume && !cursor) {
+            const body = await response.text().catch(() => '');
+            console.warn(chalk.blue.bold('[POLYMARKET]'), chalk.yellow(`Sorted query rejected (${response.status} ${body.slice(0, 200)}); retrying unsorted`));
             this.sortByVolume = false;
-            return this.fetchPage(offset);
+            return this.fetchPage(cursor);
         }
         if (!response.ok) {
-            throw new Error(`Polymarket Gamma /markets returned ${response.status}`);
+            const body = await response.text().catch(() => '');
+            throw new Error(`Polymarket Gamma /markets/keyset returned ${response.status} ${body.slice(0, 200)}`);
         }
         const data = await response.json();
-        return Array.isArray(data) ? data : [];
+        return {
+            rows: Array.isArray(data?.markets) ? data.markets : [],
+            nextCursor: typeof data?.next_cursor === 'string' && data.next_cursor ? data.next_cursor : null
+        };
     }
 
     private async fetchAllMarkets(): Promise<SweepBatch> {
@@ -179,16 +188,9 @@ export class PolymarketPollingClient {
         const tally = new QualityTally();
         let complete = false;
 
-        let offset = 0;
+        let cursor: string | null = null;
         for (let page = 0; page < this.maxPages; page++) {
-            const rows = await this.fetchPage(offset);
-            // Stop on an empty page rather than a short one: the server's page
-            // cap is not ours to assume.
-            if (rows.length === 0) {
-                complete = true;
-                break;
-            }
-            offset += rows.length;
+            const { rows, nextCursor } = await this.fetchPage(cursor);
 
             for (const row of rows) {
                 if (row.closed || row.enableOrderBook === false || row.acceptingOrders === false) continue;
@@ -201,6 +203,11 @@ export class PolymarketPollingClient {
                 }
             }
 
+            if (!nextCursor || rows.length === 0) {
+                complete = true;
+                break;
+            }
+            cursor = nextCursor;
             await sleep(PAGE_DELAY_MS);
         }
 
@@ -214,16 +221,24 @@ export class PolymarketPollingClient {
             return;
         }
         this.isPollInFlight = true;
+        const abort = new AbortController();
+        this.sweepAbort = abort;
 
         try {
             const sweep = await this.fetchAllMarkets();
+            if (abort.signal.aborted) return;
             console.log(chalk.blue.bold('[POLYMARKET]'), chalk.green(`Fetched ${sweep.markets.length} tradable open binary markets`));
             await this.onBatch(sweep);
         } catch (error) {
+            if (abort.signal.aborted) {
+                console.log(chalk.blue.bold('[POLYMARKET]'), chalk.yellow('Sweep cancelled (ingestion stopped)'));
+                return;
+            }
             console.error(chalk.blue.bold('[POLYMARKET]'), chalk.red('Poll failed:'), describeFetchError(error));
             this.onError?.(describeFetchError(error));
         } finally {
             this.isPollInFlight = false;
+            if (this.sweepAbort === abort) this.sweepAbort = null;
         }
     }
 
@@ -234,6 +249,7 @@ export class PolymarketPollingClient {
     }
 
     public stopPolling(): void {
+        this.sweepAbort?.abort();
         if (this.pollingInterval) {
             clearInterval(this.pollingInterval);
             this.pollingInterval = null;

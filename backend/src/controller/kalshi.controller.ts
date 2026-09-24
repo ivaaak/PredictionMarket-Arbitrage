@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import { KalshiService } from '../services/kalshi.service';
+import { listMarkets, parseMarketListQuery } from '../services/market-list';
+import { KalshiDataRecord } from '../types/kalshiDataRecord';
 
 const kalshiRouter = Router();
 
-// Get all Kalshi records
+// List markets, with optional search, filters and sort (see services/market-list.ts)
 kalshiRouter.get('/', async (req, res) => {
     try {
-        const limit = parseInt(req.query.limit as string) || 100;
-        const offset = parseInt(req.query.offset as string) || 0;
-        const data = await KalshiService.getAll(limit, offset);
-        res.json({ success: true, data, count: data.length });
+        const { rows, total } = await listMarkets<KalshiDataRecord>('kalshi_data', parseMarketListQuery(req.query));
+        res.json({ success: true, data: rows, count: rows.length, total });
     } catch (error) {
         res.status(500).json({ success: false, error: String(error) });
     }

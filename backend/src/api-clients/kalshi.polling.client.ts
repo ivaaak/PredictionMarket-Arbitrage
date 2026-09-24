@@ -97,6 +97,8 @@ export class KalshiPollingClient {
     private pollingInterval: NodeJS.Timeout | null = null;
     // Guards against overlapping polls when a sweep outruns the interval.
     private isPollInFlight = false;
+    // Aborted by stopPolling() so a sweep already under way stops fetching and never saves.
+    private sweepAbort: AbortController | null = null;
 
     constructor(
         private readonly onBatch: (sweep: SweepBatch) => Promise<void>,
@@ -113,7 +115,7 @@ export class KalshiPollingClient {
         });
         if (cursor) params.set('cursor', cursor);
 
-        const response = await fetch(`${this.baseUrl}/events?${params}`);
+        const response = await fetch(`${this.baseUrl}/events?${params}`, { signal: this.sweepAbort?.signal });
         if (!response.ok) {
             throw new Error(`Kalshi /events returned ${response.status}`);
         }
@@ -164,16 +166,24 @@ export class KalshiPollingClient {
             return;
         }
         this.isPollInFlight = true;
+        const abort = new AbortController();
+        this.sweepAbort = abort;
 
         try {
             const sweep = await this.fetchAllMarkets();
+            if (abort.signal.aborted) return;
             console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.green(`Fetched ${sweep.markets.length} tradable open markets`));
             await this.onBatch(sweep);
         } catch (error) {
+            if (abort.signal.aborted) {
+                console.log(chalk.red.bold('[KALSHI-POLLING]'), chalk.yellow('Sweep cancelled (ingestion stopped)'));
+                return;
+            }
             console.error(chalk.red.bold('[KALSHI-POLLING]'), chalk.red('Poll failed:'), error);
             this.onError?.(error instanceof Error ? error.message : String(error));
         } finally {
             this.isPollInFlight = false;
+            if (this.sweepAbort === abort) this.sweepAbort = null;
         }
     }
 
@@ -188,6 +198,7 @@ export class KalshiPollingClient {
     }
 
     public stopPolling() {
+        this.sweepAbort?.abort();
         if (this.pollingInterval) {
             clearInterval(this.pollingInterval);
             this.pollingInterval = null;

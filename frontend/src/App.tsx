@@ -27,6 +27,8 @@ function App() {
 
     useEffect(() => () => cancelDemo.current?.(), []);
     const [activeTab, setActiveTab] = useState<Tab>('arbitrage');
+    // Shared by the Polymarket and Kalshi tables so a search carries across tabs.
+    const [marketSearch, setMarketSearch] = useState('');
 
     const handleMatchComplete = (newMatches: MarketMatch[]) => {
         setMatches(newMatches);
@@ -134,9 +136,9 @@ function App() {
                 {/* Main Content Area */}
                 <main className={styles.main}>
                     <div className={styles.tabContent}>
-                        {activeTab === 'polymarket' && <PolymarketTable />}
+                        {activeTab === 'polymarket' && <PolymarketTable search={marketSearch} onSearchChange={setMarketSearch} />}
 
-                        {activeTab === 'kalshi' && <KalshiTable />}
+                        {activeTab === 'kalshi' && <KalshiTable search={marketSearch} onSearchChange={setMarketSearch} />}
 
                         {activeTab === 'arbitrage' && (
                             <MatchResults
