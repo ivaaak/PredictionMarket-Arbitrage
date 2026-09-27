@@ -15,11 +15,16 @@ It stores the data in a **PostgreSQL database**, uses a local **Vector Matching 
 
 ## Screenshots
 
+<img src="docs/0.png" width="80%" alt="Arbitrage matching pipeline" />
+
 <img src="docs/1.png" width="80%" alt="Arbitrage opportunities view" />
 
 <img src="docs/2.png" width="80%" alt="Market feed view" />
 
-<img src="docs/3.png" width="80%" alt="Matching panel and filters" />
+<img src="docs/3.png" width="80%" alt="Matching single LLM" />
+
+<img src="docs/4.png" width="80%" alt="Analytics view" />
+
 
 
 ## 🏗️ System Architecture
